@@ -2,7 +2,9 @@
 <h1 align="center">Relay</h1>
 <p align="center">One workspace. Multiple repositories. Persistent coding agents.</p>
 
-[Download](https://github.com/DeepakSilaych/relay/releases) · [Architecture & CLI](docs/relay/lite-v1.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
+**macOS 12+ · Apple Silicon only.** Current downloads are ad-hoc signed and **not notarized by Apple**. Intel Mac, Windows, and Linux desktop installers are not available.
+
+[Download](https://github.com/Magi-Labs/relay/releases) · [Architecture & CLI](docs/relay/lite-v1.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
 
 Relay is a terminal workspace app for coding agents. Run agents locally or on an SSH-accessible VM, give each task worktrees across several repositories, and inspect every repository’s files, diffs, Git state, pull requests, and attached Linear ticket in one window.
 
@@ -22,7 +24,7 @@ brew install --cask deepaksilaych/tap/relay
 brew update && brew upgrade --cask relay
 ```
 
-You can also download a DMG or ZIP from [Releases](https://github.com/DeepakSilaych/relay/releases). Current builds are ad-hoc signed and strictly verified, but **not notarized by Apple**. macOS may require approval in System Settings → Privacy & Security. Automatic in-app installation remains disabled.
+You can also download a DMG or ZIP from [Releases](https://github.com/Magi-Labs/relay/releases). Current builds are ad-hoc signed and strictly verified, but **not notarized by Apple**. macOS may require approval in System Settings → Privacy & Security. Automatic in-app installation remains disabled.
 
 Homebrew installs Git, GitHub CLI, tmux, and Python for local execution. Install your coding-agent CLI separately. Remote hosts need their own tools and an SSH alias; Relay can use sess presets. Native Windows sessions and Intel Mac/Linux desktop installers are not currently supported.
 
