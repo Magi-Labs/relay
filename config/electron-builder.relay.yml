@@ -4,7 +4,7 @@ artifactName: Relay-${version}-${arch}.${ext}
 extraMetadata:
   relayAutoUpdate: false
   name: relay
-  version: 0.3.1
+  version: 0.3.2
   main: out/relay/main/index.js
 npmRebuild: false
 directories:

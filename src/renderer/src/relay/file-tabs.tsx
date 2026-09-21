@@ -1,9 +1,14 @@
+import { discardDrafts } from './file-drafts'
 import { useEffect, useState } from 'react'
 import { File, GitCompareArrows, X } from 'lucide-react'
 import type { OpenFile } from './editor'
 import { ActionMenu, copyPath, type Action } from './action-menu'
 export const fileKey = (file: OpenFile) =>
-  JSON.stringify([file.absolutePath || [file.repo, file.path], file.scope])
+  JSON.stringify([
+    file.absolutePath || [file.repo, file.path],
+    file.scope,
+    file.scope === 'comparison' ? file.comparisonRef : undefined
+  ])
 type Group = { files: OpenFile[]; active?: OpenFile }
 function read(): Record<string, Group> {
   try {
@@ -13,7 +18,7 @@ function read(): Record<string, Group> {
       f &&
       typeof f.repo === 'string' &&
       typeof f.path === 'string' &&
-      (!f.scope || ['working', 'staged'].includes(f.scope))
+      (!f.scope || ['working', 'staged', 'comparison'].includes(f.scope))
     for (const [key, value] of Object.entries(stored).slice(-50)) {
       if (
         !value ||
@@ -86,7 +91,7 @@ export function useFileTabs(
       .catch(report)
   }
   const close = (file = current.active) => {
-    if (!file) {
+    if (!file || !discardDrafts(host, workspace, [file])) {
       return
     }
     setGroups((all) => {
@@ -105,8 +110,18 @@ export function useFileTabs(
       }
     })
   }
-  const closeOthers = (file: OpenFile) =>
+  const closeOthers = (file: OpenFile) => {
+    if (
+      !discardDrafts(
+        host,
+        workspace,
+        current.files.filter((f) => fileKey(f) !== fileKey(file))
+      )
+    ) {
+      return
+    }
     setGroups((all) => ({ ...all, [context]: { files: [file], active: file } }))
+  }
   return {
     files: current.files,
     file: current.active,
@@ -137,7 +152,7 @@ export function FileTabs({
       duplicate = files.some(
         (f) => fileKey(f) !== fileKey(file) && f.path.split('/').pop() === name
       )
-    const label = `${name}${file.scope ? ` · ${file.scope} diff` : ''}`
+    const label = `${name}${file.scope ? ` · ${file.scope === 'comparison' ? `vs ${file.comparisonRef}` : file.scope} diff` : ''}`
     const actions: Action[] = [
       { label: 'Copy path', run: () => copyPath(file.absolutePath || file.path) },
       { label: 'Reveal in file tree', run: () => reveal(file) },

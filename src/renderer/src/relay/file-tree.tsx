@@ -1,8 +1,9 @@
+import { GitStatusIcon } from './git-status-icon'
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Folder, LoaderCircle } from 'lucide-react'
 import { getFileTypeIcon } from '@/lib/file-type-icons'
 import { ActionMenu, copyPath } from './action-menu'
-import type { FileEntry, Workspace } from '../../../shared/relay/types'
+import type { Comparison, FileEntry, Workspace } from '../../../shared/relay/types'
 import type { OpenFile } from './editor'
 export function useFileTree(host: string, workspace: Workspace, active?: OpenFile) {
   const key = `relay.tree:${host}:${workspace.id}`
@@ -63,7 +64,9 @@ export function Directory({
   root,
   depth = 0,
   openFile,
-  tree
+  tree,
+  comparison,
+  virtual = false
 }: {
   host: string
   workspace: string
@@ -73,6 +76,8 @@ export function Directory({
   depth?: number
   openFile: (f: OpenFile) => void
   tree: Tree
+  comparison?: Comparison
+  virtual?: boolean
 }) {
   const selectedRow = useRef<HTMLButtonElement>(null)
   const [entries, setEntries] = useState<FileEntry[]>([]),
@@ -83,6 +88,11 @@ export function Directory({
     let active = true
     setLoading(true)
     setError('')
+    if (virtual) {
+      setEntries([])
+      setLoading(false)
+      return
+    }
     window.relay
       .request<{ entries: FileEntry[]; limited: boolean }>(host, 'files', {
         workspace,
@@ -108,8 +118,25 @@ export function Directory({
     return () => {
       active = false
     }
-  }, [host, workspace, repo, directory, tree.revision])
-  const hasSelected = entries.some(
+  }, [host, workspace, repo, directory, tree.revision, virtual])
+  const visible = [...entries]
+  const virtualPaths = new Set<string>()
+  const changes = comparison?.error ? [] : comparison?.files || []
+  const prefix = directory ? `${directory}/` : ''
+  for (const change of changes) {
+    if (!change.path.startsWith(prefix)) {
+      continue
+    }
+    const rest = change.path.slice(prefix.length),
+      name = rest.split('/')[0]
+    const path = prefix + name
+    if (!visible.some((entry) => entry.path === path)) {
+      visible.push({ name, path, directory: rest.includes('/'), symlink: false })
+      virtualPaths.add(path)
+    }
+  }
+  visible.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name))
+  const hasSelected = visible.some(
     (entry) => (repo === '@files' ? entry.path : `${root}/${entry.path}`) === tree.target
   )
   useEffect(() => {
@@ -133,18 +160,27 @@ export function Directory({
           {error} · Retry
         </button>
       )}
-      {!loading && !error && !entries.length && (
+      {!loading && !error && !visible.length && (
         <p className="px-3 py-1 text-xs text-muted-foreground">Empty folder</p>
       )}
-      {entries.map((entry) => {
+      {visible.map((entry) => {
         const Icon = entry.directory ? Folder : getFileTypeIcon(entry.name),
           open = tree.expanded.includes(tree.rowKey(repo, entry.path))
         const absolute = repo === '@files' ? entry.path : `${root}/${entry.path}`,
           selected = tree.target === absolute
         const file = { repo, path: entry.path }
+        const change = changes.find((f) => f.path === entry.path)
+        const nested = entry.directory && changes.some((f) => f.path.startsWith(`${entry.path}/`))
+        const diff: OpenFile = { ...file, scope: 'comparison', comparisonRef: comparison?.ref }
+        const activate = () =>
+          entry.directory ? tree.toggle(repo, entry.path) : openFile(change ? diff : file)
         const actions = [
+          ...(!entry.directory && change
+            ? [{ label: `Compare with ${comparison?.ref}`, run: () => openFile(diff) }]
+            : []),
           {
             label: entry.directory ? (open ? 'Collapse folder' : 'Expand folder') : 'Open file',
+            disabled: change?.worktree === 'D',
             run: () => (entry.directory ? tree.toggle(repo, entry.path) : openFile(file))
           },
           {
@@ -163,7 +199,7 @@ export function Directory({
                 aria-expanded={entry.directory ? open : undefined}
                 style={{ paddingLeft: 12 + depth * 12 }}
                 title={absolute}
-                onClick={() => (entry.directory ? tree.toggle(repo, entry.path) : openFile(file))}
+                onClick={activate}
               >
                 {entry.directory ? (
                   open ? (
@@ -175,7 +211,23 @@ export function Directory({
                   <span className="w-3" />
                 )}
                 <Icon className="size-4 shrink-0 text-muted-foreground" />
-                <span className="truncate">{entry.name}</span>
+                <span
+                  className={`truncate ${change?.worktree === 'D' ? 'line-through' : ''}`}
+                  style={{
+                    color:
+                      change || nested
+                        ? `var(--git-decoration-${change?.worktree === 'D' ? 'deleted' : change?.worktree === 'A' ? 'added' : 'modified'})`
+                        : undefined
+                  }}
+                >
+                  {entry.name}
+                </span>
+                {change && <GitStatusIcon file={change} code={change.worktree} />}
+                {nested && (
+                  <span className="ml-auto text-xs text-muted-foreground" title="Contains changes">
+                    ●
+                  </span>
+                )}
               </button>
             </ActionMenu>
             {entry.directory && open && (
@@ -188,6 +240,8 @@ export function Directory({
                 depth={depth + 1}
                 openFile={openFile}
                 tree={tree}
+                comparison={comparison}
+                virtual={virtualPaths.has(entry.path)}
               />
             )}
           </div>

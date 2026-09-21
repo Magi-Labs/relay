@@ -169,3 +169,17 @@ sess 0.7.0 uses zmx for its own new sessions. Relay currently retains its tmux s
 Relay is independently maintained by [Deepak Silaych](https://github.com/DeepakSilaych). It derives from Orca and uses [sess](https://github.com/DeepakSilaych/sess) for persistent sessions. Original copyright notices and licenses are preserved. Relay changes are also released under the MIT license.
 
 Releases before this repository was established remain in the [original development fork](https://github.com/DeepakSilaych/orca/releases).
+
+### Repository browser and comparison
+
+The **Repositories** button lists repositories registered on the selected host, with their paths, origin, branch, working-tree status and workspace attachments. Use **+** inside that view to register or clone another repository.
+
+In **Files**, each repository has a comparison ref. `auto` tries `dev`, `origin/dev`, `main`, `origin/main`, `master`, `origin/master`, then `HEAD`. Enter another branch, tag or commit and click **Apply** to save it for that workspace. The explorer marks added, modified and deleted files, including changes already committed on the task branch. Click a changed file to see the selected ref beside its current contents; **Edit file** opens the editable working copy. Deleted paths remain in the explorer for reviewing their diffs. Source control's staging view stays separate.
+
+Agents can set the same ref on the execution host:
+
+```sh
+relay --workspace WORKSPACE_ID repo compare REPO_NAME --ref dev --json
+```
+
+Comparisons use the selected commit directly, rather than a merge base, and include staged, unstaged and untracked files. Remote-tracking refs use the last fetched state; Relay does not fetch automatically.

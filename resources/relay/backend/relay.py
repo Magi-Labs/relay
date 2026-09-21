@@ -19,7 +19,7 @@ import time
 import uuid
 from urllib.parse import urlsplit, unquote
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 DEFAULT_PREFERENCES = {
     "theme": "graphite", "accent": "mint", "font_family": "system",
     "font_size": 13, "line_height": 1.35, "terminal_padding": 18,
@@ -383,6 +383,21 @@ class Backend:
             atomic(self.config_path, c)
             return row
 
+    def repo_inventory(self, **_):
+        snapshot = self.snapshot()
+        def detail(row):
+            result = self.status_one(row, compare=False)
+            try:
+                remote = text(git(row["path"], "remote", "get-url", "origin", ok=(0, 2, 128)))
+                if remote.startswith(("http://", "https://")):
+                    parsed = urlsplit(remote)
+                    remote = parsed.scheme + "://" + (parsed.hostname or "") + ((":" + str(parsed.port)) if parsed.port else "") + parsed.path
+                result["remote"] = remote
+            except Exception: result["remote"] = ""
+            result["workspaces"] = [{"id": w["id"], "name": w["name"], "path": r["path"], "branch": r.get("branch", "")} for w in snapshot["workspaces"] for r in w["repos"] if r["id"] == row["id"]]
+            return result
+        return {"repos": list(POOL.map(detail, snapshot["repos"]))}
+
     def branches(self, repo, **_):
         r = next((r for r in self.config()["repos"] if r["id"] == repo), None)
         if not r: raise ValueError("Unknown repository")
@@ -408,6 +423,7 @@ class Backend:
 
     def context(self, ws):
         lines = ["# Relay workspace: " + ws["name"], "", "This is a Relay workspace. Use the `relay` CLI, not `orca`, `orca-ide`, or Orca orchestration skills.",
+                 "Relay CLI documentation: [commands and agent usage](https://github.com/DeepakSilaych/relay/blob/main/resources/relay/backend/RELAY-CLI.md).",
                  "Read the CLI guide at " + str(self.root / "utils" / "relay" / "RELAY-CLI.md") + ".",
                  "Relay is a separate application; Orca ancestry does not imply its orchestration runtime is installed.",
                  "Run agents from this workspace. Each task repository must be attached before editing.",
@@ -671,12 +687,48 @@ class Backend:
         legacy.write_text(launcher.read_text())
         legacy.chmod(0o755)
         (folder / "magi.py").write_text("#!/usr/bin/env python3\nimport runpy\nrunpy.run_path(" + repr(str(folder / "relay.py")) + ", run_name=\"__main__\")\n")
+        documentation = "Relay CLI documentation: [commands and agent usage](https://github.com/DeepakSilaych/relay/blob/main/resources/relay/backend/RELAY-CLI.md)."
+        for manifest in (self.root / "workspaces").glob("*/workspace.json"):
+            guide = manifest.parent / "AGENTS.md"
+            content = guide.read_text() if guide.exists() else ""
+            if "https://github.com/DeepakSilaych/relay/blob/main/resources/relay/backend/RELAY-CLI.md" not in content:
+                guide.write_text(content.rstrip() + "\n\n" + documentation + "\n")
         return {"path": str(launcher)}
 
-    def status_one(self, row):
+    def comparison_target(self, row, selected="auto"):
+        candidates = [selected] if selected != "auto" else ["dev", "origin/dev", "main", "origin/main", "master", "origin/master", "HEAD"]
+        for candidate in candidates:
+            commit = text(git(row["path"], "rev-parse", "--verify", ref(candidate) + "^{commit}", ok=(0, 128)))
+            if commit: return candidate, commit
+        raise ValueError("Comparison ref does not resolve to a commit: " + selected)
+
+    def repo_compare(self, workspace, repo, comparison_ref="auto", **_):
+        with self.lock():
+            row = self.attachment(workspace, repo)
+            selected, commit = self.comparison_target(row, comparison_ref)
+            ws = self.ws(workspace)
+            ws.setdefault("comparisonRefs", {})[repo] = comparison_ref
+            self.save_ws(ws)
+            return {"ref": selected, "commit": commit}
+
+    def comparison(self, row):
+        selected = row.get("comparison_ref", "auto")
+        try:
+            selected, commit = self.comparison_target(row, selected)
+            parts = git(row["path"], "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-status", "-z", commit, "--").decode(errors="replace").split("\0")
+            files = [{"path": parts[i + 1], "index": ".", "worktree": parts[i], "untracked": False, "conflict": False} for i in range(0, len(parts) - 1, 2)]
+            known = {f["path"] for f in files}
+            for path in git(row["path"], "ls-files", "--others", "--exclude-standard", "-z").decode(errors="replace").split("\0"):
+                if path and path not in known:
+                    files.append({"path": path, "index": ".", "worktree": "A", "untracked": True, "conflict": False})
+            return {"ref": selected, "commit": commit, "files": files, "error": None}
+        except Exception as e:
+            return {"ref": selected, "files": [], "error": str(e)}
+
+    def status_one(self, row, compare=True):
         try:
             data = git(row["path"], "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all")
-            return {**row, **parse_status(data), "error": None}
+            return {**row, **parse_status(data), "comparison": self.comparison(row) if compare else None, "error": None}
         except Exception as e:
             return {**row, "files": [], "error": str(e)}
 
@@ -692,7 +744,7 @@ class Backend:
         ws = self.ws(workspace)
         rows = ws["repos"] + [r for r in self.config()["repos"] if r.get("utility")]
         start = time.monotonic()
-        results = list(POOL.map(self.status_one, rows))
+        results = list(POOL.map(self.status_one, [{**r, "comparison_ref": ws.get("comparisonRefs", {}).get(r["id"], "auto")} for r in rows]))
         return {"repos": results, "agents": self.terminal_agents(ws["terminals"]), "elapsedMs": round((time.monotonic() - start) * 1000, 1), "at": time.time()}
 
     def terminal_cwd(self, workspace, terminal, **_):
@@ -759,7 +811,27 @@ class Backend:
         if not p.is_file(): raise ValueError("Not a regular file")
         with p.open("rb") as f: raw = f.read(MAX_TEXT + 1)
         if b"\0" in raw[:8192]: return {"text": "Binary file", "binary": True, "truncated": False}
-        return {"text": raw[:MAX_TEXT].decode(errors="replace"), "truncated": len(raw) > MAX_TEXT, "binary": False}
+        try: decoded = raw[:MAX_TEXT].decode("utf-8")
+        except UnicodeDecodeError: return {"text": "Unsupported encoding", "binary": True, "truncated": False}
+        return {"text": decoded, "version": hashlib.sha256(raw).hexdigest(), "truncated": len(raw) > MAX_TEXT, "binary": False}
+
+    def file_save(self, workspace, repo, path, text, version, **_):
+        if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_TEXT:
+            raise ValueError("File exceeds the 2 MB editing limit")
+        with self.lock():
+            current = self.file(workspace, repo, path)
+            if current.get("binary") or current.get("truncated"):
+                raise ValueError("This file cannot be edited as UTF-8 text")
+            if not version or current.get("version") != version:
+                raise ValueError("File changed on disk. Your draft is preserved; reopen after discarding it to load the latest version.")
+            p = Path(self.file_info(workspace, repo, path)["absolutePath"])
+            raw = text.encode("utf-8")
+            # Preserve the inode, permissions and existing worktree symlinks.
+            with p.open("r+b") as stream:
+                if hashlib.sha256(stream.read()).hexdigest() != version:
+                    raise ValueError("File changed on disk; save cancelled")
+                stream.seek(0); stream.write(raw); stream.truncate(); stream.flush(); os.fsync(stream.fileno())
+            return {"text": text, "version": hashlib.sha256(raw).hexdigest(), "binary": False, "truncated": False}
 
     def diff(self, workspace, repo, path="", scope="working", **_):
         r = self.attachment(workspace, repo)
@@ -776,18 +848,22 @@ class Backend:
                 return {**self.file(workspace, repo, path), "untracked": True}
         return {"text": raw.decode(errors="replace"), "truncated": truncated, "untracked": False}
 
-    def diff_content(self, workspace, repo, path, scope="working", **_):
+    def diff_content(self, workspace, repo, path, scope="working", comparison_ref=None, **_):
         r = self.attachment(workspace, repo)
         within(r["path"], path)
-        if scope not in ("working", "staged"): raise ValueError("Unsupported diff scope")
-        status = self.status_one(r)
+        if scope not in ("working", "staged", "comparison"): raise ValueError("Unsupported diff scope")
+        status = {"files": []} if scope == "comparison" else self.status_one(r, compare=False)
         row = next((f for f in status["files"] if f["path"] == path), {})
         def blob(spec):
             size = text(git(r["path"], "cat-file", "-s", spec, ok=(0, 128)))
             if not size: return b""
             if int(size) > MAX_TEXT: return b" " * (MAX_TEXT + 1)
             return git(r["path"], "show", spec)
-        original = blob(("HEAD:" if scope == "staged" else ":") + ((row.get("original") or path) if scope == "staged" else path))
+        if scope == "comparison":
+            selected = comparison_ref or self.ws(workspace).get("comparisonRefs", {}).get(repo, "auto")
+            _, commit = self.comparison_target(r, selected)
+            original = blob(commit + ":" + path)
+        else: original = blob(("HEAD:" if scope == "staged" else ":") + ((row.get("original") or path) if scope == "staged" else path))
         if scope == "staged": modified = blob(":" + path)
         else:
             p = within(r["path"], path)
@@ -880,7 +956,7 @@ class Backend:
         return result
 
     def dispatch(self, op, args=None):
-        allowed = {"terminal_run", "terminal_read", "terminal_send", "resolve_links", "file_info", "terminal_cwd", "terminal_split", "terminal_resize", "terminal_reorder", "workspace_reorder", "snapshot", "preferences_get", "preferences_set", "host_add", "repo_register", "branches", "workspace_create", "repo_attach", "workspace_archive", "workspace_rename", "terminal_rename", "terminal_new", "terminal_prepare", "terminal_remove", "status", "files", "file", "diff", "diff_content", "git_action", "ticket_attach", "integrations", "install_cli"}
+        allowed = {"repo_inventory", "repo_compare", "terminal_run", "terminal_read", "terminal_send", "resolve_links", "file_info", "terminal_cwd", "terminal_split", "terminal_resize", "terminal_reorder", "workspace_reorder", "snapshot", "preferences_get", "preferences_set", "host_add", "repo_register", "branches", "workspace_create", "repo_attach", "workspace_archive", "workspace_rename", "terminal_rename", "terminal_new", "terminal_prepare", "terminal_remove", "status", "files", "file", "file_save", "diff", "diff_content", "git_action", "ticket_attach", "integrations", "install_cli"}
         if op not in allowed: raise ValueError("Unknown operation: " + op)
         return getattr(self, op)(**(args or {}))
 
@@ -895,7 +971,7 @@ def rpc(backend):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Relay — multi-repo agent workspaces", epilog="Commands: workspace list/create/rename/archive; repo register/attach/list; terminal new/run/read/send/remove/split/rename; ticket attach; host add. Run a persistent command with: relay --workspace ID terminal run --name Review --command 'codex' --json. Read output: relay --workspace ID terminal read --terminal ID --json. Send input: terminal send --terminal ID --input-text TEXT [--enter]. Relay does not implement Orca orchestration or orca-ide.")
+    parser = argparse.ArgumentParser(description="Relay — multi-repo agent workspaces", epilog="Commands: workspace list/create/rename/archive; repo register/attach/list/compare; terminal new/run/read/send/remove/split/rename; ticket attach; host add. Run a persistent command with: relay --workspace ID terminal run --name Review --command 'codex' --json. Read output: relay --workspace ID terminal read --terminal ID --json. Send input: terminal send --terminal ID --input-text TEXT [--enter]. Relay does not implement Orca orchestration or orca-ide.")
     parser.add_argument("--version", action="version", version="Relay " + VERSION)
     parser.add_argument("--root", default=os.environ.get("RELAY_ROOT") or os.environ.get("MAGI_ROOT"))
     parser.add_argument("--workspace", default=os.environ.get("RELAY_WORKSPACE") or os.environ.get("MAGI_WORKSPACE"))
@@ -906,7 +982,7 @@ def main():
     args, extras = parser.parse_known_args()
     if args.rpc: return rpc(Backend(args.root))
     sub = argparse.ArgumentParser(add_help=False)
-    for opt in ("repo", "branch", "new-branch", "base", "path", "url", "name", "terminal", "axis", "host", "ssh", "cwd", "scope", "directory", "message", "command", "input-text", "lines"):
+    for opt in ("ref", "repo", "branch", "new-branch", "base", "path", "url", "name", "terminal", "axis", "host", "ssh", "cwd", "scope", "directory", "message", "command", "input-text", "lines"):
         sub.add_argument("--" + opt)
     for opt in ("blank", "utility", "enter"):
         sub.add_argument("--" + opt, action="store_true")
@@ -915,7 +991,7 @@ def main():
     words = args.words
     if not words: parser.print_help(); return
     backend = Backend(args.root)
-    commands = {("terminal", "run"): "terminal_run", ("terminal", "read"): "terminal_read", ("terminal", "send"): "terminal_send", ("terminal", "remove"): "terminal_remove", ("terminal", "split"): "terminal_split",("workspace", "rename"): "workspace_rename", ("terminal", "rename"): "terminal_rename", ("workspace", "list"): "snapshot", ("workspace", "create"): "workspace_create", ("workspace", "archive"): "workspace_archive", ("repo", "register"): "repo_register", ("repo", "attach"): "repo_attach", ("repo", "list"): "snapshot", ("terminal", "new"): "terminal_new", ("ticket", "attach"): "ticket_attach", ("host", "add"): "host_add"}
+    commands = {("repo", "compare"): "repo_compare", ("terminal", "run"): "terminal_run", ("terminal", "read"): "terminal_read", ("terminal", "send"): "terminal_send", ("terminal", "remove"): "terminal_remove", ("terminal", "split"): "terminal_split",("workspace", "rename"): "workspace_rename", ("terminal", "rename"): "terminal_rename", ("workspace", "list"): "snapshot", ("workspace", "create"): "workspace_create", ("workspace", "archive"): "workspace_archive", ("repo", "register"): "repo_register", ("repo", "attach"): "repo_attach", ("repo", "list"): "snapshot", ("terminal", "new"): "terminal_new", ("ticket", "attach"): "ticket_attach", ("host", "add"): "host_add"}
     op = commands.get(tuple(words[:2]), words[0])
     positional = words[2:]
     if args.workspace: options["workspace"] = args.workspace
@@ -923,10 +999,11 @@ def main():
         if positional: options["name"] = " ".join(positional)
         if "repo" in options:
             options["repos"] = [{"repo": r} for r in options.pop("repo").split(",")]
-    elif op == "repo_attach" and positional: options["repo"] = positional[0]
+    elif op in ("repo_attach", "repo_compare") and positional: options["repo"] = positional[0]
     elif op == "repo_register" and positional: options["path"] = positional[0]
     elif op == "ticket_attach" and positional: options["ticket"] = positional[0]
     elif op == "host_add" and positional: options["name"] = positional[0]
+    if "ref" in options: options["comparison_ref"] = options.pop("ref")
     host = options.pop("host", "local")
     try:
         if host != "local":

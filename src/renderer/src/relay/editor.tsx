@@ -1,3 +1,5 @@
+import { draftKey, getDraft, setDraft } from './file-drafts'
+import { Button } from '@/components/ui/button'
 import { restoreEditor } from './editor-state'
 import { useRef } from 'react'
 import { useEffect, useState } from 'react'
@@ -41,7 +43,8 @@ export type OpenFile = {
   absolutePath?: string
   repo: string
   path: string
-  scope?: 'working' | 'staged'
+  scope?: 'working' | 'staged' | 'comparison'
+  comparisonRef?: string
   line?: number
   column?: number
 }
@@ -50,13 +53,15 @@ export function FileViewer({
   host,
   workspace,
   file,
-  theme
+  theme,
+  openFile
 }: {
   revision?: number
   host: string
   workspace: string
   file: OpenFile
   theme: string
+  openFile: (file: OpenFile) => void
 }) {
   const disposeView = useRef<(() => void) | undefined>(undefined)
   useEffect(
@@ -67,15 +72,27 @@ export function FileViewer({
     []
   )
   const [content, setContent] = useState<{
+    version?: string
     text?: string
     original?: string
     modified?: string
     truncated?: boolean
     binary?: boolean
   }>()
+  const key = draftKey(host, workspace, file)
+  const [draft, updateDraft] = useState(() => getDraft(key))
+  const [saving, setSaving] = useState(false)
+  const saveRef = useRef<() => void>(() => {})
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const contentKey = JSON.stringify([host, workspace, file.repo, file.path, file.scope])
+  const contentKey = JSON.stringify([
+    host,
+    workspace,
+    file.repo,
+    file.path,
+    file.scope,
+    file.comparisonRef
+  ])
   const previousKey = useRef('')
   useEffect(() => {
     let active = true
@@ -90,11 +107,13 @@ export function FileViewer({
         workspace,
         repo: file.repo,
         path: file.path,
+        comparison_ref: file.comparisonRef,
         scope: file.scope
       })
       .then((value) => {
         if (active) {
           setContent(value)
+          updateDraft(getDraft(key))
         }
       })
       .finally(() => {
@@ -110,7 +129,33 @@ export function FileViewer({
     return () => {
       active = false
     }
-  }, [host, workspace, file, revision, contentKey])
+  }, [host, workspace, file, revision, contentKey, key])
+  const save = async () => {
+    if (!draft || saving) {
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const saved = await window.relay.request<NonNullable<typeof content>>(host, 'file_save', {
+        workspace,
+        repo: file.repo,
+        path: file.path,
+        text: draft.text,
+        version: draft.version
+      })
+      setContent(saved)
+      setDraft(key)
+      updateDraft(undefined)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+  saveRef.current = () => {
+    void save()
+  }
   const language =
     {
       ts: 'typescript',
@@ -127,7 +172,7 @@ export function FileViewer({
       go: 'go'
     }[file.path.split('.').pop() || ''] || 'plaintext'
   const options = {
-    readOnly: true,
+    readOnly: !!file.scope || saving,
     scrollbar: diffEditorScrollbarOptions,
     minimap: { enabled: false },
     fontSize: 13,
@@ -140,17 +185,47 @@ export function FileViewer({
         <span className="flex-1 truncate">
           {file.repo.startsWith('@') ? '' : `${file.repo} / `}
           {file.path}
-          {file.scope && ` · ${file.scope} diff`}
+          {file.scope &&
+            ` · ${file.scope === 'comparison' ? `vs ${file.comparisonRef || 'base'}` : file.scope} diff`}
         </span>
         <span className="ml-3 shrink-0 text-muted-foreground">
-          {loading ? 'Refreshing… · Read-only' : 'Read-only'}
+          {saving
+            ? 'Saving…'
+            : loading
+              ? 'Refreshing…'
+              : file.scope
+                ? 'Read-only diff'
+                : draft
+                  ? 'Unsaved changes'
+                  : 'Saved'}
         </span>
+        {file.scope && (
+          <Button
+            className="ml-3"
+            size="sm"
+            variant="outline"
+            onClick={() => openFile({ ...file, scope: undefined })}
+          >
+            Edit file
+          </Button>
+        )}
+        {!file.scope && (
+          <Button
+            className="ml-3"
+            size="sm"
+            disabled={!draft || saving}
+            onClick={() => void save()}
+          >
+            Save
+          </Button>
+        )}
       </div>
-      {error ? (
-        <p role="alert" className="p-4 text-sm text-destructive">
+      {error && (
+        <p role="alert" className="px-3 py-2 text-sm text-destructive">
           {error}
         </p>
-      ) : !content ? (
+      )}
+      {!content ? (
         <p className="p-4 text-sm text-muted-foreground">Loading file…</p>
       ) : content.binary || content.truncated ? (
         <p className="p-4 text-sm text-muted-foreground">
@@ -180,8 +255,21 @@ export function FileViewer({
         <Editor
           onMount={(editor) => {
             disposeView.current = restoreEditor(editor, host, workspace, file)
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current())
           }}
-          value={content.text}
+          onChange={(text) => {
+            if (text === undefined || !content.version) {
+              return
+            }
+            const next = {
+              text,
+              original: draft?.original ?? content.text ?? '',
+              version: draft?.version ?? content.version
+            }
+            setDraft(key, next)
+            updateDraft(getDraft(key))
+          }}
+          value={draft?.text ?? content.text}
           language={language}
           theme={theme === 'light' ? 'vs' : 'vs-dark'}
           options={options}

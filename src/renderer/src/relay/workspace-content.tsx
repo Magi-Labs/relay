@@ -101,6 +101,7 @@ export function WorkspaceContent({
           <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">Loading editor…</p>}>
             <FileViewer
               key={JSON.stringify([host, workspace.id, fileKey(file), file.line, file.column])}
+              openFile={openFile}
               revision={revision}
               host={host}
               workspace={workspace.id}

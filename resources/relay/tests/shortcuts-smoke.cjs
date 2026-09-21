@@ -113,10 +113,17 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-shortcut-qa-'))
         (b) => b.textContent === 'Terminal 2' && b.className.includes('border-b-2')
       )
     )
+    await p.locator('.xterm-helper-textarea:visible').focus()
+    await key('t')
+    await p.waitForFunction(() =>
+      [...document.querySelectorAll('button')].some(
+        (b) => b.textContent === 'Terminal 3' && b.className.includes('border-b-2')
+      )
+    )
     const created = (await request('snapshot')).workspaces.find(
       (w) => w.name === 'Shortcut workspace'
     )
-    if (created.terminals.length !== 2) {
+    if (created.terminals.length !== 3) {
       throw new Error('New terminal shortcut did not create exactly one terminal')
     }
     await p.getByRole('button', { name: 'Beta', exact: true }).click()

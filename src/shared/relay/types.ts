@@ -42,7 +42,10 @@ export type Change = {
   untracked: boolean
   conflict: boolean
 }
+export type Comparison = { ref: string; commit?: string; files: Change[]; error: string | null }
 export type RepoStatus = Repo & {
+  comparison?: Comparison
+  comparison_ref?: string
   files: Change[]
   branch: string
   ahead: number

@@ -196,9 +196,29 @@ printf '  ENG-42 (https://          IN REVIEW    Other column\\n  linear.app/exa
     await p.keyboard.up(mod)
     await p.locator('main').getByRole('button', { name: 'notes.md', exact: true }).waitFor()
     await expect(p.locator('.monaco-editor').first()).toBeVisible()
+    const cdp = await p.context().newCDPSession(p)
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+    await p
+      .locator('.monaco-editor .view-lines')
+      .first()
+      .click({ position: { x: 50, y: 25 } })
+    await p.keyboard.press(process.platform === 'darwin' ? 'Meta+End' : 'Control+End')
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.insertText(' draft-marker')
+    )
+    await expect(p.getByText('Unsaved changes', { exact: true })).toBeVisible()
     await p.getByRole('button', { name: 'other.txt', exact: true }).click()
     await p.getByRole('button', { name: 'Close other.txt', exact: true }).waitFor()
     await p.locator('main').getByRole('button', { name: 'notes.md', exact: true }).click()
+    await expect(p.getByText('Unsaved changes', { exact: true })).toBeVisible()
+    await p.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(p.getByText('Saved', { exact: true })).toBeVisible()
+    const notes = await request('file', {
+      workspace: 'genral',
+      repo: '@workspace',
+      path: 'notes.md'
+    })
+    expect(notes.text).toContain('draft-marker')
     await app.evaluate(({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows()[0].webContents
       const modifiers = [process.platform === 'darwin' ? 'meta' : 'control']
@@ -208,7 +228,7 @@ printf '  ENG-42 (https://          IN REVIEW    Other column\\n  linear.app/exa
     await expect(p.getByRole('button', { name: 'Close notes.md', exact: true })).toHaveCount(0)
     await expect(p.getByRole('button', { name: 'Close other.txt', exact: true })).toBeVisible()
     console.log(
-      'PASS: inherited NO_COLOR removed, ANSI and truecolor rendered, native OSC 8 links, full-width and table-wrapped URLs, modifier gating, safe protocols, and file tab routing.'
+      'PASS: inherited NO_COLOR removed, ANSI and truecolor rendered, native OSC 8 links, full-width and table-wrapped URLs, modifier gating, safe protocols, file tab routing, editable drafts across tabs, and saving to disk.'
     )
   } finally {
     for (const w of (await request('snapshot')).workspaces) {

@@ -1,3 +1,4 @@
+import { ComparisonControl } from './comparison-control'
 import { GitStatusIcon, RepoStatusIcon } from './git-status-icon'
 import { Directory, useFileTree, type Tree } from './file-tree'
 import { ActionMenu, copyPath } from './action-menu'
@@ -86,10 +87,20 @@ function Repository({ repo, props, view }: { repo: RepoStatus; props: Props; vie
             {repo.ahead > 0 && <span>↑{repo.ahead}</span>}
             {repo.behind > 0 && <span>↓{repo.behind}</span>}
           </div>
+          {view === 'files' && (
+            <ComparisonControl
+              repo={repo}
+              host={props.host}
+              workspace={props.workspace.id}
+              refresh={props.refresh}
+              report={props.report}
+            />
+          )}
           {repo.error ? (
             <p className="px-3 text-xs text-destructive">{repo.error}</p>
           ) : view === 'files' ? (
             <Directory
+              comparison={repo.comparison}
               tree={props.tree!}
               root={repo.path}
               host={props.host}

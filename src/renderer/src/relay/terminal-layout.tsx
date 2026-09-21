@@ -101,8 +101,8 @@ export function TerminalLayout({
               width: `${pane.width}%`,
               height: `${pane.height}%`
             }}
-            onPointerDownCapture={() => select(pane.terminal)}
-            onFocusCapture={() => select(pane.terminal)}
+            onPointerDownCapture={() => visible && select(pane.terminal)}
+            onFocusCapture={() => visible && select(pane.terminal)}
           >
             {panes.length > 1 && (
               <span className="pointer-events-none absolute right-2 top-1 z-10 rounded bg-background/80 p-1">

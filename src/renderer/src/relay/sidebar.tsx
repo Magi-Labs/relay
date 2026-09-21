@@ -31,6 +31,7 @@ export function WorkspaceSidebar({
   selectHost,
   selectWorkspace,
   setForm,
+  openRepositories,
   openSettings,
   refresh
 }: {
@@ -42,6 +43,7 @@ export function WorkspaceSidebar({
   setQuery: (value: string) => void
   selectHost: (host: string) => void
   selectWorkspace: (id: string) => void
+  openRepositories: () => void
   setForm: (kind: FormKind) => void
   refresh: () => void
   openSettings: () => void
@@ -144,10 +146,10 @@ export function WorkspaceSidebar({
           className="w-full justify-start"
           size="sm"
           disabled={!snapshot}
-          onClick={() => setForm('repo')}
+          onClick={openRepositories}
         >
           <FolderGit2 />
-          Add repository
+          Repositories
         </Button>
         <Button variant="ghost" className="w-full justify-start" size="sm" onClick={openSettings}>
           <Settings2 />

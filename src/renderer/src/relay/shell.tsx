@@ -1,3 +1,4 @@
+import { RepositoryManager } from './repository-manager'
 import { AgentIdentities } from './agent-icon'
 import { useNavigation } from './navigation-state'
 import { Feedback } from './action-menu'
@@ -35,6 +36,7 @@ export function RelayShell() {
   const [loading, setLoading] = useState(true)
   const [revision, setRevision] = useState(0)
   const [form, setForm] = useState<FormKind>()
+  const [repositoriesOpen, setRepositoriesOpen] = useState(false)
   const [settings, setSettings] = useState(false)
   const [appearance, setAppearance] = useState(readAppearance)
   const [query, setQuery] = useState('')
@@ -48,7 +50,8 @@ export function RelayShell() {
   const { file, select: setFile } = fileTabs
   const [busy, setBusy] = useState(false)
   const workspace = snapshot?.workspaces.find((w) => w.id === workspaceId)
-  const terminal = workspace?.terminals.find((t) => t.id === terminalId) || workspace?.terminals[0]
+  const selectedTerminal = workspace?.terminals.find((t) => t.id === terminalId)
+  const terminal = selectedTerminal || workspace?.terminals[0]
   const refresh = useCallback(() => setRevision((value) => value + 1), [])
   useEffect(() => {
     document.documentElement.classList.toggle('dark', appearance.theme === 'dark')
@@ -263,6 +266,7 @@ export function RelayShell() {
                     }}
                     selectWorkspace={selectWorkspace}
                     setForm={setForm}
+                    openRepositories={() => setRepositoriesOpen(true)}
                     openSettings={() => setSettings(true)}
                   />
                 </ResizableSidebar>
@@ -313,7 +317,12 @@ export function RelayShell() {
                     theme={appearance.theme}
                     fontSize={appearance.fontSize}
                     loading={loading}
-                    select={setTerminalId}
+                    select={(id) => {
+                      // Focus from a fallback/cached view must not overwrite a pending tab selection.
+                      if (!terminalId || selectedTerminal) {
+                        setTerminalId(id)
+                      }
+                    }}
                     openFile={setFile}
                     refresh={refresh}
                     terminalNew={terminalNew}
@@ -348,6 +357,16 @@ export function RelayShell() {
                 }}
                 attachTicket={() => setForm('ticket')}
               />
+              {repositoriesOpen && !form && snapshot && (
+                <RepositoryManager
+                  key={host}
+                  host={host}
+                  snapshot={snapshot}
+                  close={() => setRepositoriesOpen(false)}
+                  add={() => setForm('repo')}
+                  select={selectWorkspace}
+                />
+              )}
               {form && snapshot && (
                 <WorkspaceForm
                   key={form}
