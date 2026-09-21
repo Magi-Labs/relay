@@ -1,0 +1,30 @@
+[
+  {
+    "command": "relay repo register ./sample/frontend --name frontend",
+    "output": "Registered repository: frontend"
+  },
+  {
+    "command": "relay repo register ./sample/api --name api",
+    "output": "Registered repository: api"
+  },
+  {
+    "command": "relay workspace create Checkout --repo frontend,api",
+    "output": "frontend: relay/checkout-aa79e70e (isolated worktree)\napi: relay/checkout-aa79e70e (isolated worktree)"
+  },
+  {
+    "command": "# Edit README.md in both sample worktrees",
+    "output": "Two sample files updated on disk."
+  },
+  {
+    "command": "relay --workspace CHECKOUT repo compare frontend --ref main",
+    "output": "Comparison saved: main"
+  },
+  {
+    "command": "relay --workspace CHECKOUT repo compare api --ref main",
+    "output": "Comparison saved: main"
+  },
+  {
+    "command": "relay --workspace CHECKOUT status --json",
+    "output": "frontend against main: M README.md\napi against main: M README.md"
+  }
+]

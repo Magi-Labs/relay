@@ -8,6 +8,12 @@
 
 Relay is a terminal workspace app for coding agents. Run agents locally or on an SSH-accessible VM, give each task worktrees across several repositories, and inspect every repository’s files, diffs, Git state, pull requests, and attached Linear ticket in one window.
 
+## Multi-repository CLI demo
+
+![Relay CLI creating a workspace across frontend and API repositories, then comparing both against main](docs/relay/demo/workflow.gif)
+
+[Watch the MP4](docs/relay/demo/workflow.mp4). This is a replay of executed CLI commands with summarized output, not a desktop screen recording. It creates two sample Git repositories, attaches both as isolated worktrees, edits both, and checks comparisons against `main`. Paths and the workspace ID are abbreviated for readability. [Reproduce the demo](docs/relay/demo/record.py) with `python3 docs/relay/demo/record.py`.
+
 ## Why Relay exists
 
 Relay is a fork of [Orca](https://github.com/stablyai/orca). It was created to address the feature bloat and reliability problems we encountered in our terminal-first, multi-repository workflow. Relay retains Orca’s UI foundations and focuses the application on workspaces, terminals, files, and Git.
