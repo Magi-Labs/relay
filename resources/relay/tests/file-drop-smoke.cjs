@@ -5,7 +5,8 @@ const fs = require('node:fs'),
   path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-drop-qa-'))
-const remoteBase = `/tmp/${path.basename(fixture)}`, remoteRoot = `${remoteBase}/relay`
+const remoteBase = `/tmp/${path.basename(fixture)}`,
+  remoteRoot = `${remoteBase}/relay`
 const sample = path.join(fixture, "sample ' file.txt")
 fs.writeFileSync(sample, 'Relay file drop fixture\n')
 const quote = (text) => "'" + text.replaceAll("'", "'\\''") + "'"
@@ -90,8 +91,10 @@ const ssh = (command) =>
     ssh(`mkdir -p ${quote(remoteBase + '/magi/utils')}`)
     await request('local', 'host_add', { name: 'Drop-VM', ssh: 'local-vm', root: remoteRoot })
     await p.reload()
-    await p.getByRole('combobox', { name: 'Execution host' }).click()
-    await p.getByRole('option', { name: 'Drop-VM', exact: true }).click()
+    await p
+      .locator('[data-host="Drop-VM"]')
+      .getByRole('button', { name: /^Genral/ })
+      .click()
     await p.locator('.xterm-helper-textarea:visible').waitFor()
     remoteReady = true
     uploaded = await drop('Drop-VM')

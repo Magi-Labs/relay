@@ -9,7 +9,7 @@ export async function closeActiveTab({
   snapshot,
   setFile,
   setBusy,
-  setSnapshot,
+  updateSnapshot,
   setTerminalId,
   selectWorkspace
 }: {
@@ -20,9 +20,9 @@ export async function closeActiveTab({
   snapshot?: Snapshot
   setFile: Dispatch<SetStateAction<OpenFile | undefined>>
   setBusy: Dispatch<SetStateAction<boolean>>
-  setSnapshot: Dispatch<SetStateAction<Snapshot | undefined>>
+  updateSnapshot: (host: string, snapshot: Snapshot) => void
   setTerminalId: (id: string) => void
-  selectWorkspace: (id: string) => void
+  selectWorkspace: (host: string, id: string) => void
 }) {
   if (file) {
     setFile(undefined)
@@ -38,7 +38,7 @@ export async function closeActiveTab({
       ...(terminal ? { terminal: terminal.id } : {})
     })
     const next = await window.relay.request<Snapshot>(host, 'snapshot')
-    setSnapshot(next)
+    updateSnapshot(host, next)
     if (terminal) {
       const remaining = next.workspaces.find((w) => w.id === workspace.id)?.terminals || []
       const index = workspace.terminals.findIndex((t) => t.id === terminal.id)
@@ -46,7 +46,10 @@ export async function closeActiveTab({
       setTerminalId(sibling?.id || remaining[Math.min(index, remaining.length - 1)]?.id || '')
     } else {
       const index = snapshot?.workspaces.findIndex((w) => w.id === workspace.id) || 0
-      selectWorkspace(next.workspaces[Math.min(index, next.workspaces.length - 1)]?.id || 'genral')
+      selectWorkspace(
+        host,
+        next.workspaces[Math.min(index, next.workspaces.length - 1)]?.id || 'genral'
+      )
     }
   } finally {
     setBusy(false)

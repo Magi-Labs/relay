@@ -44,7 +44,10 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-shortcut-qa-'))
     )
   }
   try {
-    await p.getByRole('button', { name: /^Genral/ }).waitFor()
+    await p
+      .locator('[data-host="local"]')
+      .getByRole('button', { name: /^Genral/ })
+      .waitFor()
     const a = (await request('workspace_create', { name: 'Alpha' })).workspace
     await request('terminal_new', { workspace: a.id, name: 'Second' })
     await request('workspace_create', { name: 'Beta' })
@@ -88,7 +91,10 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-shortcut-qa-'))
     }
     await key('w')
     await p.getByRole('button', { name: 'Alpha', exact: true }).waitFor({ state: 'detached' })
-    await p.getByRole('button', { name: /^Genral/ }).click()
+    await p
+      .locator('[data-host="local"]')
+      .getByRole('button', { name: /^Genral/ })
+      .click()
     await key('w')
     await p.getByRole('button', { name: 'Terminal 1', exact: true }).waitFor({ state: 'detached' })
     await key('w')

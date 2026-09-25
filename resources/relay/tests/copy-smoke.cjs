@@ -36,7 +36,7 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-copy-qa-')),
     )
   let remoteReady = false
   try {
-    await p.getByRole('combobox', { name: 'Execution host' }).waitFor()
+    await p.locator('[data-host="local"]').waitFor()
     await app.evaluate(({ clipboard, ipcMain }) => {
       global.savedClipboard = clipboard
         .availableFormats()
@@ -52,8 +52,10 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-copy-qa-')),
     })
     await request('local', 'host_add', { name: remote, ssh: 'local-vm', root: remoteRoot })
     await p.reload()
-    await p.getByRole('combobox', { name: 'Execution host' }).click()
-    await p.getByRole('option', { name: remote, exact: true }).click()
+    await p
+      .locator(`[data-host="${remote}"]`)
+      .getByRole('button', { name: /^Genral/ })
+      .click()
     await p.locator('.xterm-helper-textarea:visible').waitFor()
     remoteReady = true
     const ws = (await request(remote, 'snapshot')).workspaces[0],
@@ -146,18 +148,40 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-copy-qa-')),
       await p.keyboard.up('Shift')
     }
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(sample)
+    await app.evaluate(({ clipboard }) => clipboard.writeText('stale clipboard'))
+    await p.locator('.xterm-screen:visible').click({ button: 'right' })
+    await p.getByRole('menuitem', { name: 'Copy', exact: true }).click()
+    await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(sample)
+    await app.evaluate(({ clipboard }) => clipboard.writeText('PASTE_SAMPLE_456'))
+    await p.locator('.xterm-screen:visible').click({ button: 'right' })
+    await p.getByRole('menuitem', { name: 'Paste', exact: true }).click()
+    await expect
+      .poll(() =>
+        app.evaluate(() => global.input.some((data) => data.includes('PASTE_SAMPLE_456')))
+      )
+      .toBe(true)
     await p.locator('.xterm-helper-textarea:visible').focus()
     await key('c', ['control'])
     await expect.poll(() => app.evaluate(() => global.input.includes('\x03'))).toBe(true)
     await p.getByRole('button', { name: 'Terminal 1', exact: true }).click({ button: 'right' })
     await p.getByRole('menuitem', { name: 'Copy current path', exact: true }).click()
     await expect.poll(() => app.evaluate(() => global.copies.at(-1))).toBe(ws.path)
+    await expect
+      .poll(
+        async () => {
+          await p.evaluate(
+            ({ session }) => window.relay.write(session, "printf '\\033[?1000l\\033[?1006l'\r"),
+            { session }
+          )
+          await p.waitForTimeout(200)
+          return ssh(`tmux display-message -p -t '=relay-${t.id}:' '#{mouse_standard_flag}'`).trim()
+        },
+        { timeout: 15000 }
+      )
+      .toBe('0')
     await p.evaluate(
       ({ session }) =>
-        window.relay.write(
-          session,
-          "printf '\\033[?1000l\\033[?1006l'; for i in {1..100}; do echo WHEEL_HISTORY_$i; done\r"
-        ),
+        window.relay.write(session, 'for i in {1..100}; do echo WHEEL_HISTORY_$i; done\r'),
       { session }
     )
     await expect
@@ -165,14 +189,18 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-copy-qa-')),
         p.locator('.xterm-rows > div').filter({ hasText: 'WHEEL_HISTORY_100' }).count()
       )
       .toBeGreaterThan(0)
+    const screen = await p.locator('.xterm-screen:visible').boundingBox()
+    await p.locator('.xterm-helper-textarea:visible').focus()
+    await p.mouse.move(screen.x + screen.width / 2, screen.y + screen.height / 2)
     await app.evaluate(() => {
       global.input = []
     })
-    const screen = await p.locator('.xterm-screen:visible').boundingBox()
-    await p.mouse.move(screen.x + screen.width / 2, screen.y + screen.height / 2)
     await p.mouse.wheel(0, -360)
+    await p.waitForTimeout(700)
     await expect
-      .poll(() => ssh(`tmux display-message -p -t '=relay-${t.id}:' '#{pane_in_mode}'`).trim())
+      .poll(() => ssh(`tmux display-message -p -t '=relay-${t.id}:' '#{pane_in_mode}'`).trim(), {
+        timeout: 15000
+      })
       .toBe('1')
     expect(
       await app.evaluate(() =>
@@ -183,7 +211,7 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-copy-qa-')),
     ).toBe(false)
     ssh(`tmux send-keys -t '=relay-${t.id}:' -X cancel`)
     console.log(
-      'PASS: VM truecolor and native hyperlinks; actual VM drag selection under application mouse capture + Cmd-C and native Edit Copy verified against system clipboard; Ctrl-C still interrupts; VM path copying works; wheel enters tmux history without sending arrow keys.'
+      'PASS: VM truecolor and native hyperlinks; actual VM drag selection under application mouse capture + Cmd-C, native Edit Copy, and right-click Copy verified against system clipboard; right-click Paste inserts clipboard text; Ctrl-C still interrupts; VM path copying works; wheel enters tmux history without sending arrow keys.'
     )
   } finally {
     for (const host of ['local', ...(remoteReady ? [remote] : [])]) {

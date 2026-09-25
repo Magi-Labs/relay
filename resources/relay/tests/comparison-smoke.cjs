@@ -33,7 +33,10 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-compare-ui-'))
   const request = (op, args = {}) =>
     p.evaluate(({ op, args }) => window.relay.request('local', op, args), { op, args })
   try {
-    await p.getByRole('button', { name: /^Genral/ }).waitFor()
+    await p
+      .locator('[data-host="local"]')
+      .getByRole('button', { name: /^Genral/ })
+      .waitFor()
     await request('repo_register', { path: repo, name: 'CompareRepo' })
     const attached = await request('repo_attach', { workspace: 'genral', repo: 'CompareRepo' })
     fs.writeFileSync(path.join(attached.path, 'note.txt'), 'working line\n')

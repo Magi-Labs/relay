@@ -30,7 +30,7 @@ print(json.dumps({'identifier':'ENG-123','title':'Checkout regression','url':'ht
   const request = (op, args = {}) =>
     p.evaluate(({ op, args }) => window.relay.request('local', op, args), { op, args })
   try {
-    await p.getByRole('combobox', { name: 'Execution host' }).waitFor()
+    await p.locator('[data-host="local"]').waitFor()
     await p.locator('.xterm-helper-textarea:visible').waitFor()
     await p.getByRole('button', { name: 'New workspace', exact: true }).click()
     await p.getByLabel('Name', { exact: true }).fill('Linked task')

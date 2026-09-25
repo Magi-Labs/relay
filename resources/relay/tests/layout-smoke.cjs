@@ -56,7 +56,10 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-layout-qa-'))
     await p.waitForTimeout(80) // dnd-kit suppresses the click that ends a pointer drag for 50 ms.
   }
   try {
-    await p.getByRole('button', { name: /^Genral/ }).waitFor()
+    await p
+      .locator('[data-host="local"]')
+      .getByRole('button', { name: /^Genral/ })
+      .waitFor()
     const a = (await request('workspace_create', { name: 'Split test' })).workspace
     const b = (await request('workspace_create', { name: 'Order test' })).workspace
     await p.reload()
@@ -156,7 +159,7 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-layout-qa-'))
       throw new Error('Development build must not attempt production update')
     }
     const update = await p.evaluate(() => window.relay.getUpdate())
-    if (update.releaseUrl !== 'https://github.com/DeepakSilaych/orca/releases') {
+    if (update.releaseUrl !== 'https://github.com/DeepakSilaych/relay/releases') {
       throw new Error('Incorrect release source')
     }
     if (process.env.RELAY_QA_OUTPUT) {

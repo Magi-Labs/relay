@@ -12,23 +12,18 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
-import type { Host, Snapshot } from '../../../shared/relay/types'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import type { HostSection } from './host-sections'
 import type { FormKind } from './forms'
 export function WorkspaceSidebar({
   host,
-  hosts,
-  snapshot,
+  sections,
+  collapsed,
+  reorderHosts,
+  toggleHost,
   workspaceId,
   query,
   setQuery,
-  selectHost,
   selectWorkspace,
   setForm,
   openRepositories,
@@ -36,15 +31,16 @@ export function WorkspaceSidebar({
   refresh
 }: {
   host: string
-  hosts: Host[]
-  snapshot?: Snapshot
+  sections: HostSection[]
+  collapsed: Record<string, boolean>
+  reorderHosts: (ids: string[]) => void
+  toggleHost: (host: string) => void
   workspaceId: string
   query: string
   setQuery: (value: string) => void
-  selectHost: (host: string) => void
-  selectWorkspace: (id: string) => void
+  selectWorkspace: (host: string, id: string) => void
   openRepositories: () => void
-  setForm: (kind: FormKind) => void
+  setForm: (kind: FormKind, host?: string) => void
   refresh: () => void
   openSettings: () => void
 }) {
@@ -52,24 +48,7 @@ export function WorkspaceSidebar({
   return (
     <aside className="flex h-full w-full shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-2 p-3">
-        {host === 'local' ? (
-          <Monitor className="size-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <Server className="size-4 shrink-0 text-muted-foreground" />
-        )}
-        <Select value={host} onValueChange={selectHost}>
-          <SelectTrigger aria-label="Execution host" className="min-w-0 flex-1">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="local">Local</SelectItem>
-            {hosts.map((h) => (
-              <SelectItem key={h.name} value={h.name}>
-                {h.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <span className="flex-1 text-xs font-medium text-muted-foreground">HOSTS</span>
         <Button
           aria-label="Add host"
           title="Add host"
@@ -94,7 +73,6 @@ export function WorkspaceSidebar({
           aria-label="New workspace"
           variant="ghost"
           size="icon-xs"
-          disabled={!snapshot}
           onClick={() => setForm('workspace')}
         >
           <Plus />
@@ -102,42 +80,107 @@ export function WorkspaceSidebar({
       </div>
       <div className="min-h-0 flex-1 overflow-auto scrollbar-sleek px-2">
         <ReorderList
-          items={(snapshot?.workspaces || []).filter((w) =>
-            w.name.toLowerCase().includes(query.toLowerCase())
-          )}
+          items={sections.map((s) => ({ id: s.host, name: s.label }))}
           disabled={!!query}
+          ignore="input, [data-no-drag], [data-host-body]"
           reorder={async (ids) => {
-            await window.relay.request(host, 'workspace_reorder', { ids })
-            refresh()
+            reorderHosts(ids)
           }}
         >
-          {(w) => (
-            <RenameItem
-              actions={menus.workspace(w)}
-              key={w.id}
-              name={w.name}
-              kind="workspace"
-              selected={w.id === workspaceId}
-              className="relay-row py-2 text-sm"
-              enabled={!w.permanent}
-              select={() => selectWorkspace(w.id)}
-              rename={async (name) => {
-                await window.relay.request(host, 'workspace_rename', { workspace: w.id, name })
-                refresh()
-              }}
-              leading={<TerminalSquare className="size-4 shrink-0 text-muted-foreground" />}
-              trailing={
-                w.permanent ? (
-                  <LockKeyhole
-                    aria-label="Permanent workspace"
-                    className="size-3 text-muted-foreground"
-                  />
-                ) : (
-                  <span className="text-xs text-muted-foreground">{w.repos.length || ''}</span>
-                )
-              }
-            />
-          )}
+          {(item) => {
+            const section = sections.find((s) => s.host === item.id)!
+            const isCollapsed = !!collapsed[section.host] && !query
+            return (
+              <div className="w-full min-w-0" data-host={section.host}>
+                <div className="flex items-center gap-1 px-1 py-1">
+                  <button
+                    data-no-drag
+                    aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${section.label}`}
+                    title={isCollapsed ? 'Expand' : 'Collapse'}
+                    aria-expanded={!isCollapsed}
+                    className="p-1 text-muted-foreground hover:text-foreground"
+                    onClick={() => toggleHost(section.host)}
+                  >
+                    {isCollapsed ? (
+                      <ChevronRight className="size-3" />
+                    ) : (
+                      <ChevronDown className="size-3" />
+                    )}
+                  </button>
+                  {section.host === 'local' ? (
+                    <Monitor className="size-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <Server className="size-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-xs font-semibold">
+                    {section.label}
+                  </span>
+                  <Button
+                    data-no-drag
+                    aria-label={`New workspace in ${section.label}`}
+                    title={`New workspace in ${section.label}`}
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => setForm('workspace', section.host)}
+                  >
+                    <Plus />
+                  </Button>
+                </div>
+                {section.error && (
+                  <p role="alert" className="px-3 pb-1 text-xs text-destructive">
+                    {section.error}
+                  </p>
+                )}
+                {!isCollapsed && (
+                  <div data-host-body className="pb-1">
+                    <ReorderList
+                      items={section.workspaces}
+                      disabled={!!query}
+                      reorder={async (ids) => {
+                        await window.relay.request(section.host, 'workspace_reorder', { ids })
+                        refresh()
+                      }}
+                    >
+                      {(w) => (
+                        <RenameItem
+                          actions={menus.workspace(w, section.host)}
+                          key={w.id}
+                          name={w.name}
+                          kind="workspace"
+                          selected={section.host === host && w.id === workspaceId}
+                          className="relay-row py-2 text-sm"
+                          enabled={!w.permanent}
+                          select={() => selectWorkspace(section.host, w.id)}
+                          rename={async (name) => {
+                            await window.relay.request(section.host, 'workspace_rename', {
+                              workspace: w.id,
+                              name
+                            })
+                            refresh()
+                          }}
+                          leading={
+                            <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
+                          }
+                          trailing={
+                            w.permanent ? (
+                              <LockKeyhole
+                                aria-label="Permanent workspace"
+                                className="size-3 text-muted-foreground"
+                              />
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                {w.repos.length || ''}
+                              </span>
+                            )
+                          }
+                        />
+                      )}
+                    </ReorderList>
+                  </div>
+                )}
+              </div>
+            )
+          }}
         </ReorderList>
       </div>
       <div className="space-y-1 border-t p-2">
@@ -145,7 +188,6 @@ export function WorkspaceSidebar({
           variant="ghost"
           className="w-full justify-start"
           size="sm"
-          disabled={!snapshot}
           onClick={openRepositories}
         >
           <FolderGit2 />

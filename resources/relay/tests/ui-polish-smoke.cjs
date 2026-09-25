@@ -23,7 +23,7 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-polish-qa-'))
     p.evaluate(({ op, args }) => window.relay.request('local', op, args), { op, args })
   const row = (name) =>
     p
-      .locator('button.relay-row')
+      .locator('[data-host="local"] button.relay-row')
       .filter({ has: p.locator('[data-rename-label]', { hasText: name }) })
   const menu = async (locator, name) => {
     await locator.click({ button: 'right' })
@@ -99,7 +99,7 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-polish-qa-'))
     })
     await p.getByRole('button', { name: 'notes.md', exact: true }).click()
     await expect(p.locator('.monaco-editor')).toBeVisible()
-    await expect(p.getByText('Read-only', { exact: true })).toBeVisible()
+    await expect(p.getByText('Saved', { exact: true })).toBeVisible()
     expect(await p.evaluate(() => window.qa.terminal.isConnected)).toBe(true)
     const tab = p.locator('main').getByRole('button', { name: 'notes.md', exact: true })
     await p.getByRole('button', { name: 'alias.md', exact: true }).click()

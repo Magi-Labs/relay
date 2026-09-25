@@ -3,9 +3,19 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['resources/relay/backend/**', 'resources/relay/tests/*.py', '.github/workflows/relay-backend.yml']
+    paths:
+      [
+        'resources/relay/backend/**',
+        'resources/relay/tests/*.py',
+        '.github/workflows/relay-backend.yml'
+      ]
   pull_request:
-    paths: ['resources/relay/backend/**', 'resources/relay/tests/*.py', '.github/workflows/relay-backend.yml']
+    paths:
+      [
+        'resources/relay/backend/**',
+        'resources/relay/tests/*.py',
+        '.github/workflows/relay-backend.yml'
+      ]
 permissions:
   contents: read
 jobs:

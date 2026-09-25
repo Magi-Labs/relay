@@ -1,9 +1,10 @@
 import { installFileDrop } from './file-drop'
+import { installClipboardIpc } from './clipboard'
 import { removeInheritedNoColor } from '../pty/terminal-color-env'
 import { operations } from './operations'
 import { configureHomebrewPath } from './homebrew-path'
 import { createUpdates } from './updates'
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell, clipboard } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { join, resolve } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { relayProfile } from './storage-migration'
@@ -55,13 +56,7 @@ function authorize(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): 
 }
 if (ownsLock) {
   installFileDrop(hosts, authorize, (key) => terminals.has(key))
-  ipcMain.handle('relay:copy', (event, text: string) => {
-    authorize(event)
-    if (typeof text !== 'string' || text.length > 8 * 1024 * 1024) {
-      throw new Error('Clipboard text is too large')
-    }
-    clipboard.writeText(text)
-  })
+  installClipboardIpc(authorize)
   ipcMain.handle(
     'relay:request',
     (event, host: string, op: string, args?: Record<string, unknown>) => {

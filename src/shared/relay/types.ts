@@ -95,6 +95,7 @@ export type UpdateState = {
 export type RelayApi = {
   dropFiles: (host: string, workspace: string, terminal: string, files: File[]) => Promise<string[]>
   copyText: (text: string) => Promise<void>
+  readClipboardText: () => Promise<string>
   getUpdate: () => Promise<UpdateState>
   runUpdate: () => Promise<UpdateState>
   onUpdate: (listener: (state: UpdateState) => void) => () => void

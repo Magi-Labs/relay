@@ -29,30 +29,29 @@ export function useNavigation() {
     workspaceId = state.workspaces[host] || 'genral',
     key = JSON.stringify([host, workspaceId])
   const validate = useCallback(
-    (ids: string[]) =>
+    (target: string, ids: string[]) =>
       set((s) =>
-        ids.includes(s.workspaces[host] || 'genral')
+        ids.includes(s.workspaces[target] || 'genral')
           ? s
-          : { ...s, workspaces: { ...s.workspaces, [host]: 'genral' } }
+          : { ...s, workspaces: { ...s.workspaces, [target]: 'genral' } }
       ),
-    [host]
+    []
   )
   return {
     validate,
     host,
     workspaceId,
     terminalId: state.terminals[key] || '',
-    select: (workspace: string, terminal?: string) =>
+    select: (target: string, workspace: string, terminal?: string) =>
       set((s) => ({
         ...s,
-        workspaces: { ...s.workspaces, [host]: workspace },
+        host: target,
+        workspaces: { ...s.workspaces, [target]: workspace },
         terminals: terminal
-          ? { ...s.terminals, [JSON.stringify([host, workspace])]: terminal }
+          ? { ...s.terminals, [JSON.stringify([target, workspace])]: terminal }
           : s.terminals
       })),
     setHost: (host: string) => set((s) => ({ ...s, host })),
-    setWorkspaceId: (id: string) =>
-      set((s) => ({ ...s, workspaces: { ...s.workspaces, [host]: id } })),
     setTerminalId: (id: string) => set((s) => ({ ...s, terminals: { ...s.terminals, [key]: id } }))
   }
 }

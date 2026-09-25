@@ -5,7 +5,9 @@ const { build, Platform, Arch } = require('electron-builder')
 const { parse } = require('yaml')
 const root = resolve(__dirname, '../..')
 const config = parse(readFileSync(resolve(root, 'config/electron-builder.relay.yml'), 'utf8'))
-execFileSync(process.execPath, [resolve(root, 'config/scripts/fetch-sess.cjs'), 'darwin-arm64'], { stdio: 'inherit' })
+execFileSync(process.execPath, [resolve(root, 'config/scripts/fetch-sess.cjs'), 'darwin-arm64'], {
+  stdio: 'inherit'
+})
 const projectDir = resolve(root, config.directories.app)
 config.directories = { app: projectDir, output: resolve(root, config.directories.output) }
 config.mac.icon = resolve(root, config.mac.icon)

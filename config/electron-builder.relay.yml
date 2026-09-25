@@ -4,7 +4,7 @@ artifactName: Relay-${version}-${arch}.${ext}
 extraMetadata:
   relayAutoUpdate: false
   name: relay
-  version: 0.3.2
+  version: 0.3.3
   main: out/relay/main/index.js
 npmRebuild: false
 directories:
@@ -27,7 +27,7 @@ extraResources:
 asarUnpack:
   - '**/node-pty/**'
 mac:
-  identity: "-"
+  identity: '-'
   hardenedRuntime: true
   entitlements: resources/relay/entitlements.mac.plist
   entitlementsInherit: resources/relay/entitlements.mac.plist

@@ -15,6 +15,7 @@ const api: RelayApi = {
       files.map((file) => webUtils.getPathForFile(file))
     ),
   copyText: (text) => ipcRenderer.invoke('relay:copy', text),
+  readClipboardText: () => ipcRenderer.invoke('relay:clipboard-read'),
   getUpdate: () => ipcRenderer.invoke('relay:update:get'),
   runUpdate: () => ipcRenderer.invoke('relay:update:run'),
   onUpdate: (listener) => {

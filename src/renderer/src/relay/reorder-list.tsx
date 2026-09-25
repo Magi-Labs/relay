@@ -20,13 +20,15 @@ function Item({
   label,
   horizontal,
   children,
-  disabled
+  disabled,
+  ignore
 }: {
   id: string
   label: string
   horizontal: boolean
   children: ReactNode
   disabled: boolean
+  ignore: string
 }) {
   const { setNodeRef, attributes, listeners, transform, transition, isDragging, isOver } =
     useSortable({
@@ -42,7 +44,7 @@ function Item({
       onPointerDown={(event) => {
         if (
           event.button !== 0 ||
-          (event.target instanceof Element && event.target.closest('input, [data-no-drag]'))
+          (event.target instanceof Element && event.target.closest(ignore))
         ) {
           return
         }
@@ -62,12 +64,14 @@ export function ReorderList<T extends { id: string; name: string }>({
   items,
   horizontal = false,
   disabled = false,
+  ignore = 'input, [data-no-drag]',
   reorder,
   children
 }: {
   items: T[]
   horizontal?: boolean
   disabled?: boolean
+  ignore?: string
   reorder: (ids: string[]) => Promise<void>
   children: (item: T) => ReactNode
 }) {
@@ -114,6 +118,7 @@ export function ReorderList<T extends { id: string; name: string }>({
               label={item.name}
               horizontal={horizontal}
               disabled={disabled || busy}
+              ignore={ignore}
             >
               {children(item)}
             </Item>

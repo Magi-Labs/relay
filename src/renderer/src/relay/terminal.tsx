@@ -1,5 +1,6 @@
 import { copyKey, installTerminalCopy } from './terminal-copy'
 import { installTerminalLinks } from './terminal-links'
+import { ActionMenu, command } from './action-menu'
 import type { OpenFile } from './editor'
 import { shiftEnterInput } from '../components/terminal-pane/terminal-shift-enter-input'
 import { useEffect, useRef, useState } from 'react'
@@ -38,6 +39,7 @@ export function SessionTerminal({
   const [linkError, setLinkError] = useState('')
   const [dropError, setDropError] = useState('')
   const [dropStatus, setDropStatus] = useState('')
+  const [menuText, setMenuText] = useState('')
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
@@ -156,91 +158,145 @@ export function SessionTerminal({
     }
   }, [host, workspace, terminal, fontSize, theme, attempt])
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
-      <div
-        ref={container}
-        data-relay-host={host}
-        className="relay-terminal min-h-0 flex-1 p-3"
-        onDragOver={(event) => {
-          if (event.dataTransfer.types.includes('Files')) {
-            event.preventDefault()
-            event.dataTransfer.dropEffect = 'copy'
-          }
-        }}
-        onDrop={async (event) => {
-          if (!event.dataTransfer.files.length) {
-            return
-          }
-          event.preventDefault()
-          event.stopPropagation()
-          const target = instance.current
-          if (!target || dropStatus) {
-            return
-          }
-          setDropError('')
-          setDropStatus(host === 'local' ? 'Adding files…' : 'Uploading files…')
-          try {
-            const paths = await window.relay.dropFiles(
-              host,
-              workspace,
-              terminal,
-              Array.from(event.dataTransfer.files)
-            )
-            if (instance.current === target) {
-              target.paste(
-                `${paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(' ')} `
-              )
+    <ActionMenu
+      actions={[
+        {
+          label: 'Copy',
+          shortcut: `${command}C`,
+          disabled: !menuText,
+          run: () => {
+            if (menuText) {
+              void window.relay.copyText(menuText).catch((e) => setCopyError(String(e)))
             }
-          } catch (error) {
-            setDropError(String(error))
-          } finally {
-            setDropStatus('')
+          }
+        },
+        {
+          label: 'Paste',
+          shortcut: `${command}V`,
+          run: async () => {
+            const text = await window.relay.readClipboardText()
+            instance.current?.paste(text)
+          }
+        },
+        {
+          label: 'Select All',
+          shortcut: `${command}A`,
+          run: () => instance.current?.selectAll()
+        }
+      ]}
+    >
+      <div
+        className="relative flex h-full min-h-0 flex-col"
+        onContextMenu={(event) => {
+          // Keep the menu ours (not the pane's), and defang xterm's internal right-click shim:
+          // it parks the helper textarea under the cursor at z-index 1000 and focuses it, which
+          // makes later wheel/clicks at that spot miss the terminal entirely.
+          event.stopPropagation()
+          const area = instance.current?.textarea
+          if (area) {
+            area.value = ''
+            area.style.zIndex = '-5'
           }
         }}
-      />
-      {dropStatus && (
+        onMouseDownCapture={(event) => {
+          // Right press must keep the local selection for the context menu instead of clearing it in xterm.
+          if (event.button === 2) {
+            event.stopPropagation()
+            setMenuText(instance.current?.getSelection() || '')
+          }
+        }}
+        onMouseUpCapture={(event) => {
+          // Match the mousedown guard so xterm never sees an unmatched right release.
+          if (event.button === 2) {
+            event.stopPropagation()
+          }
+        }}
+      >
         <div
-          role="status"
-          className="absolute inset-x-3 bottom-3 rounded-md border bg-popover p-3 text-sm"
-        >
-          {dropStatus}
-        </div>
-      )}
-      {(linkError || copyError || dropError) && (
-        <div
-          role="alert"
-          className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md border bg-popover p-3 text-sm"
-        >
-          <span className="flex-1">
-            {dropError
-              ? `Could not add files: ${dropError}`
-              : copyError
-                ? `Could not copy: ${copyError}`
-                : `Could not open link: ${linkError}`}
-          </span>
-          <Button
-            size="sm"
-            onClick={() => {
-              setDropError('')
-              setLinkError('')
-              setCopyError('')
-            }}
+          ref={container}
+          data-relay-host={host}
+          className="relay-terminal min-h-0 flex-1 p-3"
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes('Files')) {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'copy'
+            }
+          }}
+          onDrop={async (event) => {
+            if (!event.dataTransfer.files.length) {
+              return
+            }
+            event.preventDefault()
+            event.stopPropagation()
+            const target = instance.current
+            if (!target || dropStatus) {
+              return
+            }
+            setDropError('')
+            setDropStatus(host === 'local' ? 'Adding files…' : 'Uploading files…')
+            try {
+              const paths = await window.relay.dropFiles(
+                host,
+                workspace,
+                terminal,
+                Array.from(event.dataTransfer.files)
+              )
+              if (instance.current === target) {
+                target.paste(
+                  `${paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(' ')} `
+                )
+              }
+            } catch (error) {
+              setDropError(String(error))
+            } finally {
+              setDropStatus('')
+            }
+          }}
+        />
+        {dropStatus && (
+          <div
+            role="status"
+            className="absolute inset-x-3 bottom-3 rounded-md border bg-popover p-3 text-sm"
           >
-            Dismiss
-          </Button>
-        </div>
-      )}
-      {error && (
-        <div
-          role="alert"
-          className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md border bg-popover p-3 text-sm"
-        >
-          <span className="flex-1">{error}</span>
-          <Button size="sm" onClick={() => setAttempt(attempt + 1)}>
-            Reconnect
-          </Button>
-        </div>
-      )}
-    </div>
+            {dropStatus}
+          </div>
+        )}
+        {(linkError || copyError || dropError) && (
+          <div
+            role="alert"
+            className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md border bg-popover p-3 text-sm"
+          >
+            <span className="flex-1">
+              {dropError
+                ? `Could not add files: ${dropError}`
+                : copyError
+                  ? `Could not copy: ${copyError}`
+                  : `Could not open link: ${linkError}`}
+            </span>
+            <Button
+              size="sm"
+              onClick={() => {
+                setDropError('')
+                setLinkError('')
+                setCopyError('')
+              }}
+            >
+              Dismiss
+            </Button>
+          </div>
+        )}
+        {error && (
+          <div
+            role="alert"
+            className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md border bg-popover p-3 text-sm"
+          >
+            <span className="flex-1">{error}</span>
+            <Button size="sm" onClick={() => setAttempt(attempt + 1)}>
+              Reconnect
+            </Button>
+          </div>
+        )}
+      </div>
+    </ActionMenu>
   )
 }

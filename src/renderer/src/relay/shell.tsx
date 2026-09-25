@@ -12,30 +12,31 @@ import { useWorkspaceShortcuts } from './shortcuts'
 import { TerminalTabs } from './terminal-tabs'
 import { WorkspaceSidebar } from './sidebar'
 import { StatusBar } from './status-bar'
-import { useCallback, useEffect, useState, useRef } from 'react'
+import { useHostSections, visibleSections } from './host-sections'
+import { useWorkspaceTelemetry } from './workspace-telemetry'
+import { useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type { Host, Snapshot, RepoStatus, Integrations } from '../../../shared/relay/types'
+import type { Host, Snapshot } from '../../../shared/relay/types'
 import { WorkspaceForm, type FormKind } from './forms'
 import { RelaySettings, readAppearance } from './settings'
 import { Repositories } from './repositories'
 export function RelayShell() {
   const panels = usePanels()
   const navigation = useNavigation()
-  const { host, setHost, workspaceId, setWorkspaceId, terminalId, setTerminalId, validate } =
-    navigation
+  const { host, workspaceId, terminalId, setTerminalId, validate } = navigation
   const [hosts, setHosts] = useState<Host[]>([])
-  const [snapshot, setSnapshot] = useState<Snapshot>()
-  const snapshotRef = useRef(snapshot)
-  snapshotRef.current = snapshot
-  const [agents, setAgents] = useState<Record<string, string | null>>({})
-  const [statuses, setStatuses] = useState<RepoStatus[]>([])
-  const [integrations, setIntegrations] = useState<Integrations>()
+  const [snapshots, setSnapshots] = useState<Record<string, Snapshot>>({})
+  const [hostErrors, setHostErrors] = useState<Record<string, string>>({})
+  const snapshot = snapshots[host]
+  const snapshotsRef = useRef(snapshots)
+  snapshotsRef.current = snapshots
+
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [revision, setRevision] = useState(0)
-  const [form, setForm] = useState<FormKind>()
+  const [form, setForm] = useState<{ kind: FormKind; host?: string }>()
   const [repositoriesOpen, setRepositoriesOpen] = useState(false)
   const [settings, setSettings] = useState(false)
   const [appearance, setAppearance] = useState(readAppearance)
@@ -52,135 +53,96 @@ export function RelayShell() {
   const workspace = snapshot?.workspaces.find((w) => w.id === workspaceId)
   const selectedTerminal = workspace?.terminals.find((t) => t.id === terminalId)
   const terminal = selectedTerminal || workspace?.terminals[0]
+  const {
+    statuses,
+    agents,
+    integrations,
+    reset: resetTelemetry
+  } = useWorkspaceTelemetry(host, workspace, revision, report)
   const refresh = useCallback(() => setRevision((value) => value + 1), [])
+  const names = useMemo(() => ['local', ...hosts.map((h) => h.name)], [hosts])
+  const sidebar = useHostSections(names)
+  const sections = visibleSections(sidebar.order, snapshots, hostErrors, query)
   useEffect(() => {
     document.documentElement.classList.toggle('dark', appearance.theme === 'dark')
     localStorage.setItem('relay.appearance', JSON.stringify(appearance))
   }, [appearance])
   useEffect(() => {
     let active = true
-    setLoading(!snapshotRef.current)
+    setLoading(!Object.keys(snapshotsRef.current).length)
     setError('')
     window.relay
       .request<Snapshot>('local', 'snapshot')
-      .then((result) => {
-        if (active) {
-          setHosts([
-            ...result.hosts,
-            ...result.sessRemotes.filter((h) => !result.hosts.some((r) => r.name === h.name))
-          ])
+      .then(async (localSnapshot) => {
+        const remotes = [
+          ...localSnapshot.hosts,
+          ...localSnapshot.sessRemotes.filter(
+            (h) => !localSnapshot.hosts.some((r) => r.name === h.name)
+          )
+        ]
+        const loaded: Record<string, Snapshot> = { local: localSnapshot }
+        const failures: Record<string, string> = {}
+        await Promise.all(
+          remotes.map((h) =>
+            window.relay
+              .request<Snapshot>(h.name, 'snapshot')
+              .then((result) => {
+                loaded[h.name] = result
+              })
+              .catch((e) => {
+                failures[h.name] = String(e)
+              })
+          )
+        )
+        if (!active) {
+          return
         }
+        setHosts(remotes)
+        setSnapshots(loaded)
+        setHostErrors(failures)
+        for (const [name, result] of Object.entries(loaded)) {
+          validate(
+            name,
+            result.workspaces.map((w) => w.id)
+          )
+        }
+        setLoading(false)
       })
-      .catch(report)
-    window.relay
-      .request<Snapshot>(host, 'snapshot')
-      .then((result) => {
+      .catch((e) => {
         if (active) {
-          setSnapshot(result)
-          validate(result.workspaces.map((w) => w.id))
+          setError(String(e))
           setLoading(false)
         }
       })
-      .catch((error) => {
-        if (active) {
-          setError(String(error))
-          setLoading(false)
-        }
-      })
     return () => {
       active = false
     }
-  }, [host, revision, report, validate])
-  useEffect(() => {
-    if (!workspace) {
-      return
-    }
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async () => {
-      try {
-        const result = await window.relay.request<{
-          repos: RepoStatus[]
-          agents?: Record<string, string | null> | null
-        }>(host, 'status', {
-          workspace: workspace.id
-        })
-        if (active) {
-          setStatuses(result.repos)
-          setAgents(result.agents || {})
-        }
-      } catch (e) {
-        if (active) {
-          report(e)
-        }
-      } finally {
-        if (active) {
-          timer = setTimeout(() => {
-            if (document.visibilityState === 'visible') {
-              void poll()
-            } else {
-              timer = setTimeout(poll, 5000)
-            }
-          }, 5000)
-        }
+  }, [revision, report, validate])
+
+  const openWorkspace = useCallback(
+    (targetHost: string, id: string, terminal?: string) => {
+      const changed = targetHost !== host || id !== workspaceId
+      navigation.select(targetHost, id, terminal)
+      if (terminal) {
+        fileTabs.deactivate(JSON.stringify([targetHost, id]))
       }
-    }
-    void poll()
-    return () => {
-      active = false
-      clearTimeout(timer)
-    }
-  }, [host, workspace, revision, report])
-  useEffect(() => {
-    if (!workspace) {
-      return
-    }
-    let active = true
-    setIntegrations(undefined)
-    const load = () =>
-      window.relay
-        .request<Integrations>(host, 'integrations', { workspace: workspace.id })
-        .then((value) => {
-          if (active) {
-            setIntegrations(value)
-          }
-        })
-        .catch(() => {
-          if (active) {
-            setIntegrations(undefined)
-          }
-        })
-    void load()
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void load()
+      setRequestView(undefined)
+      if (changed) {
+        resetTelemetry()
       }
-    }, 60000)
-    return () => {
-      active = false
-      clearInterval(interval)
-    }
-  }, [host, workspace])
-  const selectWorkspace = (id: string) => {
-    setWorkspaceId(id)
-    setRequestView(undefined)
-    setStatuses([])
-    setAgents({})
-    setIntegrations(undefined)
-  }
+    },
+    [host, workspaceId, navigation, fileTabs, resetTelemetry]
+  )
+  const openForm = useCallback((kind: FormKind, targetHost?: string) => {
+    setForm({ kind, host: targetHost })
+  }, [])
   const interactions = useWorkspaceActions({
     host,
     workspaceId,
     refresh,
     report,
-    form: setForm,
-    select: (id, terminal) => {
-      navigation.select(id, terminal)
-      if (terminal) {
-        fileTabs.deactivate(JSON.stringify([host, id]))
-      }
-      setRequestView(undefined)
-    }
+    form: openForm,
+    select: openWorkspace
   })
   const reveal = (file: OpenFile) => {
     setFile(file)
@@ -208,16 +170,19 @@ export function RelayShell() {
     }
   }
   useWorkspaceShortcuts({
-    newWorkspace: () => setForm('workspace'),
+    host,
+    newWorkspace: () => openForm('workspace'),
     newTerminal: terminalNew,
     split: terminalNew,
     disabled:
       busy || interactions.pending || loading || !!form || settings || interactions.confirming,
-    workspaces:
-      snapshot?.workspaces.filter((w) => w.name.toLowerCase().includes(query.toLowerCase())) || [],
+    workspaces: (sections.find((s) => s.host === host)?.workspaces || []).map((workspace) => ({
+      host,
+      workspace
+    })),
     workspace,
     terminal,
-    selectWorkspace,
+    selectWorkspace: openWorkspace,
     report,
     selectTerminal: (id) => {
       setTerminalId(id)
@@ -232,11 +197,14 @@ export function RelayShell() {
         snapshot,
         setFile: () => fileTabs.close(),
         setBusy,
-        setSnapshot,
+        updateSnapshot: (targetHost, next) =>
+          setSnapshots((previous) => ({ ...previous, [targetHost]: next })),
         setTerminalId,
-        selectWorkspace
+        selectWorkspace: openWorkspace
       })
   })
+  const formHost = form?.host || host
+  const formSnapshot = snapshots[formHost]
   return (
     <AgentIdentities.Provider value={agents}>
       <Feedback.Provider value={report}>
@@ -251,21 +219,15 @@ export function RelayShell() {
                   <WorkspaceSidebar
                     refresh={refresh}
                     host={host}
-                    hosts={hosts}
-                    snapshot={snapshot}
+                    sections={sections}
+                    collapsed={sidebar.collapsed}
+                    reorderHosts={sidebar.reorder}
+                    toggleHost={sidebar.toggle}
                     workspaceId={workspaceId}
                     query={query}
                     setQuery={setQuery}
-                    selectHost={(value) => {
-                      setHost(value)
-                      setSnapshot(undefined)
-                      setStatuses([])
-                      setAgents({})
-                      setIntegrations(undefined)
-                      setRequestView(undefined)
-                    }}
-                    selectWorkspace={selectWorkspace}
-                    setForm={setForm}
+                    selectWorkspace={openWorkspace}
+                    setForm={openForm}
                     openRepositories={() => setRepositoriesOpen(true)}
                     openSettings={() => setSettings(true)}
                   />
@@ -355,7 +317,7 @@ export function RelayShell() {
                   panels.update('right', { open: true })
                   setRequestView({ view: 'git', serial: Date.now() })
                 }}
-                attachTicket={() => setForm('ticket')}
+                attachTicket={() => openForm('ticket')}
               />
               {repositoriesOpen && !form && snapshot && (
                 <RepositoryManager
@@ -363,21 +325,21 @@ export function RelayShell() {
                   host={host}
                   snapshot={snapshot}
                   close={() => setRepositoriesOpen(false)}
-                  add={() => setForm('repo')}
-                  select={selectWorkspace}
+                  add={() => openForm('repo')}
+                  select={(id) => openWorkspace(host, id)}
                 />
               )}
-              {form && snapshot && (
+              {form && formSnapshot && (
                 <WorkspaceForm
-                  key={form}
-                  kind={form}
-                  host={host}
-                  snapshot={snapshot}
+                  key={form.kind}
+                  kind={form.kind}
+                  host={formHost}
+                  snapshot={formSnapshot}
                   workspace={workspace}
                   close={() => setForm(undefined)}
                   done={(id) => {
                     if (id) {
-                      selectWorkspace(id)
+                      openWorkspace(formHost, id)
                     }
                     refresh()
                   }}
