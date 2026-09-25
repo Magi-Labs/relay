@@ -12,7 +12,7 @@ export function createUpdates(publish: (state: UpdateState) => void) {
         true)
   let state: UpdateState = {
     phase: supported ? 'idle' : 'unsupported',
-    version: app.isPackaged ? app.getVersion() : '0.3.3-dev',
+    version: app.isPackaged ? app.getVersion() : '0.3.4-dev',
     message:
       app.isPackaged && !supported
         ? 'This build is not Developer ID-signed. Install updates from View releases; automatic installation requires a signed build.'

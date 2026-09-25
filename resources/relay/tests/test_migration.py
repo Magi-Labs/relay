@@ -39,7 +39,21 @@ class MigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             preset = Path(folder) / 'sess.json'
             preset.write_text(json.dumps({'version': 1, 'host': 'qa-vm', 'hosts': ['qa-vm']}))
-            with mock.patch.dict(os.environ, {'SESS_CONFIG': str(preset)}):
+            with mock.patch.dict(os.environ, {'SESS_CONFIG': str(preset), 'SESS_DIR': str(folder)}):
                 snapshot = backend.Backend(Path(folder) / 'data').snapshot()
             matches = [h for h in snapshot['sessRemotes'] if h['ssh'] == 'qa-vm']
             self.assertEqual(matches, [{'name': 'qa-vm', 'ssh': 'qa-vm', 'root': '~/relay'}])
+
+    def test_legacy_sess_aliases_dedupe_against_presets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / 'remote').write_text(
+                'default.host=local-vm\nother.host=local-vm\nunique.host=qa-box\n'
+            )
+            preset = Path(folder) / 'sess.json'
+            preset.write_text(json.dumps({'version': 1, 'host': 'local-vm', 'hosts': ['local-vm']}))
+            with mock.patch.dict(os.environ, {'SESS_CONFIG': str(preset), 'SESS_DIR': str(folder)}):
+                snapshot = backend.Backend(Path(folder) / 'data').snapshot()
+            self.assertEqual(
+                [(h['name'], h['ssh']) for h in snapshot['sessRemotes']],
+                [('local-vm', 'local-vm'), ('unique', 'qa-box')],
+            )

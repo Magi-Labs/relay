@@ -13,7 +13,7 @@ writeFileSync(
     {
       packageManager: 'npm@11.11.0',
       name: 'relay',
-      version: '0.3.3',
+      version: '0.3.4',
       description: 'Multi-repo terminal workspaces for coding agents',
       author: 'Deepak Silaych',
       license: 'MIT',

@@ -329,21 +329,25 @@ class Backend:
         order = config.get("workspace_order", [])
         workspaces.sort(key=lambda w: (order.index(w["id"]) if w["id"] in order else len(order), w["id"] != "genral", w["created"]))
         remotes = []
-        sess_config = Path(os.environ.get("SESS_DIR", str(Path.home() / ".sess"))) / "remote"
-        if sess_config.exists():
-            for line in sess_config.read_text().splitlines():
-                key, sep, host = line.partition("=")
-                if sep and key.endswith(".host"):
-                    remotes.append({"name": key[:-5], "ssh": host, "root": "~/relay"})
+        known = {h["ssh"] for h in config["hosts"]}
         modern = Path(os.environ.get("SESS_CONFIG", str(Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "sess" / "config.json")))
         if modern.exists():
             try:
                 settings = json.loads(modern.read_text())
                 presets = settings.get("hosts", []) + [settings.get("host", "")]
                 for host in presets:
-                    if isinstance(host, str) and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]*", host) and not any(h["ssh"] == host for h in remotes + config["hosts"]):
+                    if isinstance(host, str) and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]*", host) and host not in known:
                         remotes.append({"name": host, "ssh": host, "root": "~/relay"})
+                        known.add(host)
             except (OSError, ValueError, TypeError) as error: errors.append("Could not read sess presets: " + str(error))
+        sess_config = Path(os.environ.get("SESS_DIR", str(Path.home() / ".sess"))) / "remote"
+        if sess_config.exists():
+            for line in sess_config.read_text().splitlines():
+                key, sep, host = line.partition("=")
+                # Presets win: a legacy alias (sess's "default" slot) for a covered host is noise.
+                if sep and key.endswith(".host") and host and host not in known:
+                    remotes.append({"name": key[:-5], "ssh": host, "root": "~/relay"})
+                    known.add(host)
         return {"version": VERSION, "root": str(self.root), **config, "preferences": self.preferences_get(), "workspaces": workspaces,
                 "sessRemotes": remotes, "errors": errors,
                 "tools": {t: shutil.which(t) is not None for t in ("git", "tmux", "ssh", "gh", "linear", "python3")}}
