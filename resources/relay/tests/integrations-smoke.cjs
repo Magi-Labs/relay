@@ -32,7 +32,7 @@ print(json.dumps({'identifier':'ENG-123','title':'Checkout regression','url':'ht
   try {
     await p.locator('[data-host="local"]').waitFor()
     await p.locator('.xterm-helper-textarea:visible').waitFor()
-    await p.getByRole('button', { name: 'New workspace', exact: true }).click()
+    await p.getByRole('button', { name: 'New workspace in Local', exact: true }).click()
     await p.getByLabel('Name', { exact: true }).fill('Linked task')
     await p
       .getByLabel('Linear ticket ID or URL (optional)')

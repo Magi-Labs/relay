@@ -58,17 +58,7 @@ export function WorkspaceSidebar({
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
-      <div className="flex items-center justify-between px-3 pb-2 text-xs font-medium text-muted-foreground">
-        <span>WORKSPACES</span>
-        <Button
-          aria-label="New workspace"
-          variant="ghost"
-          size="icon-xs"
-          onClick={() => setForm('workspace')}
-        >
-          <Plus />
-        </Button>
-      </div>
+
       <div className="min-h-0 flex-1 overflow-auto scrollbar-sleek px-2">
         <ReorderList
           items={sections.map((s) => ({ id: s.host, name: s.label }))}
@@ -151,6 +141,23 @@ export function WorkspaceSidebar({
                           }}
                           leading={
                             <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
+                          }
+                          end={
+                            <Button
+                              data-no-drag
+                              aria-label={`New terminal in ${w.name}`}
+                              title={`New terminal in ${w.name}`}
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() =>
+                                menus
+                                  .workspace(w, section.host)
+                                  .find((action) => action.label === 'New terminal')
+                                  ?.run()
+                              }
+                            >
+                              <Plus />
+                            </Button>
                           }
                           trailing={
                             w.permanent ? (

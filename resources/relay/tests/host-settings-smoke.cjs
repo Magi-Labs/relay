@@ -46,8 +46,20 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-hosts-qa-'))
     await expect.poll(hostNames, { timeout: 15000 }).toContain('Freshhost')
     await p.locator('[data-host-row="Freshhost"]').waitFor()
     await p.locator('[data-host="Freshhost"]').waitFor()
+    // Close Settings: modal dialogs mark outside content aria-hidden (sidebar rows included).
+    await p.keyboard.press('Escape')
+    await p.getByRole('dialog', { name: 'Settings' }).waitFor({ state: 'hidden' })
+    // Each workspace row carries its own add-terminal button.
+    const terminalCount = async () =>
+      (await request('local', 'snapshot')).workspaces.flatMap((w) => w.terminals).length
+    const before = await terminalCount()
+    await p
+      .locator('[data-host="local"]')
+      .getByRole('button', { name: 'New terminal in Genral', exact: true })
+      .click()
+    await expect.poll(terminalCount, { timeout: 15000 }).toBe(before + 1)
     console.log(
-      'PASS: hosts are added and removed from Settings only; removal is confirmed inline and drops the sidebar section; adding reuses the shared host form.'
+      'PASS: hosts are added and removed from Settings only; removal is confirmed inline and drops the sidebar section; adding reuses the shared host form; each workspace row carries its own add-terminal button.'
     )
   } finally {
     console.log('Host feedback:', await p.getByRole('alert').allTextContents())

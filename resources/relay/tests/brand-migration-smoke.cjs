@@ -29,7 +29,7 @@ const launch = (executablePath, legacy = false) =>
     app = await launch('/Applications/Magi.app/Contents/MacOS/Magi', true)
     p = await app.firstWindow()
     await p.locator('.xterm-helper-textarea:visible').waitFor()
-    await p.getByRole('button', { name: 'New workspace', exact: true }).click()
+    await p.getByRole('button', { name: 'New workspace in Local', exact: true }).click()
     await p.getByLabel('Name', { exact: true }).fill('Preserved task')
     await p.getByRole('dialog').getByRole('button', { name: 'New workspace', exact: true }).click()
     await p.getByRole('button', { name: 'Preserved task', exact: true }).waitFor()
