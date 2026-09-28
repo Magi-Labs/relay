@@ -349,6 +349,19 @@ export function RelayShell() {
                 <RelaySettings
                   value={appearance}
                   update={setAppearance}
+                  hosts={snapshots.local?.hosts || []}
+                  sessHosts={snapshots.local?.sessRemotes || []}
+                  openAddHost={() => openForm('host')}
+                  removeHost={async (name) => {
+                    await window.relay.request('local', 'host_remove', { name })
+                    if (host === name) {
+                      const first = snapshotsRef.current.local?.workspaces[0]?.id
+                      if (first) {
+                        openWorkspace('local', first)
+                      }
+                    }
+                    refresh()
+                  }}
                   close={() => setSettings(false)}
                 />
               )}

@@ -35,6 +35,16 @@ class WorkspaceTests(unittest.TestCase):
             self.backend.repo_register(str(p), name)
             self.repos[name] = p
 
+    def test_host_add_and_remove_roundtrip(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = relay.Backend(Path(folder))
+            service.host_add('qa-box', 'user@host')
+            self.assertIn('qa-box', [h['name'] for h in service.snapshot()['hosts']])
+            service.host_remove('qa-box')
+            self.assertNotIn('qa-box', [h['name'] for h in service.snapshot()['hosts']])
+            with self.assertRaises(ValueError):
+                service.host_remove('qa-box')
+
     def test_permanent_general_per_host_and_restart(self):
         general = self.backend.snapshot()['workspaces'][0]
         self.assertEqual((general['id'], general['name'], general['permanent']), ('genral', 'Genral', True))

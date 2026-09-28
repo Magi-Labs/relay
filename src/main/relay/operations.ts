@@ -4,6 +4,7 @@ export const operations = new Set([
   'terminal_cwd',
   'snapshot',
   'host_add',
+  'host_remove',
   'repo_register',
   'branches',
   'workspace_create',

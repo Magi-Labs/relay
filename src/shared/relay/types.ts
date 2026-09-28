@@ -93,9 +93,15 @@ export type UpdateState = {
   percent?: number
 }
 export type RelayApi = {
-  dropFiles: (host: string, workspace: string, terminal: string, files: File[]) => Promise<string[]>
+  dropFiles: (
+    host: string,
+    workspace: string,
+    terminal: string,
+    files: (File | string)[]
+  ) => Promise<string[]>
   copyText: (text: string) => Promise<void>
   readClipboardText: () => Promise<string>
+  readClipboardImagePath: () => Promise<string | null>
   getUpdate: () => Promise<UpdateState>
   runUpdate: () => Promise<UpdateState>
   onUpdate: (listener: (state: UpdateState) => void) => () => void

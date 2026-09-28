@@ -7,6 +7,14 @@ export function copyKey(event: KeyboardEvent) {
     (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && event.shiftKey && !event.metaKey)
   )
 }
+export function pasteKey(event: KeyboardEvent) {
+  const mac = navigator.userAgent.includes('Mac')
+  return (
+    event.key.toLowerCase() === 'v' &&
+    !event.altKey &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && event.shiftKey && !event.metaKey)
+  )
+}
 export function installTerminalCopy(term: Terminal, container: HTMLElement, copy: () => void) {
   const handler = (event: ClipboardEvent) => {
     if (!container.contains(document.activeElement) || !term.hasSelection()) {

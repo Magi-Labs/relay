@@ -365,6 +365,15 @@ class Backend:
             atomic(self.config_path, c)
         return c
 
+    def host_remove(self, name, **_):
+        ident(name)
+        with self.lock():
+            c = self.config()
+            if not any(h["name"] == name for h in c["hosts"]): raise ValueError("Unknown host: " + name)
+            c["hosts"] = [h for h in c["hosts"] if h["name"] != name]
+            atomic(self.config_path, c)
+        return c
+
     def repo_register(self, path="", name="", url="", utility=False, **_):
         name = ident(name or Path((path or url).rstrip("/")).name.removesuffix(".git"))
         with self.lock():
@@ -960,7 +969,7 @@ class Backend:
         return result
 
     def dispatch(self, op, args=None):
-        allowed = {"repo_inventory", "repo_compare", "terminal_run", "terminal_read", "terminal_send", "resolve_links", "file_info", "terminal_cwd", "terminal_split", "terminal_resize", "terminal_reorder", "workspace_reorder", "snapshot", "preferences_get", "preferences_set", "host_add", "repo_register", "branches", "workspace_create", "repo_attach", "workspace_archive", "workspace_rename", "terminal_rename", "terminal_new", "terminal_prepare", "terminal_remove", "status", "files", "file", "file_save", "diff", "diff_content", "git_action", "ticket_attach", "integrations", "install_cli"}
+        allowed = {"repo_inventory", "repo_compare", "terminal_run", "terminal_read", "terminal_send", "resolve_links", "file_info", "terminal_cwd", "terminal_split", "terminal_resize", "terminal_reorder", "workspace_reorder", "snapshot", "preferences_get", "preferences_set", "host_add", "host_remove", "repo_register", "branches", "workspace_create", "repo_attach", "workspace_archive", "workspace_rename", "terminal_rename", "terminal_new", "terminal_prepare", "terminal_remove", "status", "files", "file", "file_save", "diff", "diff_content", "git_action", "ticket_attach", "integrations", "install_cli"}
         if op not in allowed: raise ValueError("Unknown operation: " + op)
         return getattr(self, op)(**(args or {}))
 
@@ -995,7 +1004,7 @@ def main():
     words = args.words
     if not words: parser.print_help(); return
     backend = Backend(args.root)
-    commands = {("repo", "compare"): "repo_compare", ("terminal", "run"): "terminal_run", ("terminal", "read"): "terminal_read", ("terminal", "send"): "terminal_send", ("terminal", "remove"): "terminal_remove", ("terminal", "split"): "terminal_split",("workspace", "rename"): "workspace_rename", ("terminal", "rename"): "terminal_rename", ("workspace", "list"): "snapshot", ("workspace", "create"): "workspace_create", ("workspace", "archive"): "workspace_archive", ("repo", "register"): "repo_register", ("repo", "attach"): "repo_attach", ("repo", "list"): "snapshot", ("terminal", "new"): "terminal_new", ("ticket", "attach"): "ticket_attach", ("host", "add"): "host_add"}
+    commands = {("repo", "compare"): "repo_compare", ("terminal", "run"): "terminal_run", ("terminal", "read"): "terminal_read", ("terminal", "send"): "terminal_send", ("terminal", "remove"): "terminal_remove", ("terminal", "split"): "terminal_split",("workspace", "rename"): "workspace_rename", ("terminal", "rename"): "terminal_rename", ("workspace", "list"): "snapshot", ("workspace", "create"): "workspace_create", ("workspace", "archive"): "workspace_archive", ("repo", "register"): "repo_register", ("repo", "attach"): "repo_attach", ("repo", "list"): "snapshot", ("terminal", "new"): "terminal_new", ("ticket", "attach"): "ticket_attach", ("host", "add"): "host_add", ("host", "remove"): "host_remove"}
     op = commands.get(tuple(words[:2]), words[0])
     positional = words[2:]
     if args.workspace: options["workspace"] = args.workspace
@@ -1007,6 +1016,7 @@ def main():
     elif op == "repo_register" and positional: options["path"] = positional[0]
     elif op == "ticket_attach" and positional: options["ticket"] = positional[0]
     elif op == "host_add" and positional: options["name"] = positional[0]
+    elif op == "host_remove" and positional: options["name"] = positional[0]
     if "ref" in options: options["comparison_ref"] = options.pop("ref")
     host = options.pop("host", "local")
     try:

@@ -30,7 +30,8 @@ const ssh = (command) =>
   const request = (host, op, args = {}) =>
     p.evaluate(({ host, op, args }) => window.relay.request(host, op, args), { host, op, args })
   let remoteReady = false,
-    uploaded
+    uploaded,
+    pastedImage
   try {
     await p.locator('.xterm-helper-textarea:visible').waitFor()
     await app.evaluate(({ ipcMain }) => {
@@ -106,8 +107,57 @@ const ssh = (command) =>
       )
     )
     expect(result).toEqual({ text: 'Relay file drop fixture\n', mode: 384 })
+    await app.evaluate(({ clipboard }) => clipboard.writeText('PASTE_TEXT_789'))
+    await app.evaluate(() => {
+      global.input = []
+    })
+    await p.locator('.xterm-helper-textarea:visible').focus()
+    await p.keyboard.press(process.platform === 'darwin' ? 'Meta+v' : 'Control+Shift+V')
+    await expect
+      .poll(() => app.evaluate(() => global.input.join('')), { timeout: 10000 })
+      .toContain('PASTE_TEXT_789')
+    const png =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    await app.evaluate(({ clipboard, nativeImage }, data) => {
+      clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(data, 'base64')))
+    }, png)
+    expect(
+      await app.evaluate(({ clipboard }) => {
+        const size = clipboard.readImage().getSize()
+        return `${size.width}x${size.height}`
+      })
+    ).toBe('1x1')
+    await app.evaluate(() => {
+      global.input = []
+    })
+    await p.keyboard.press(process.platform === 'darwin' ? 'Meta+v' : 'Control+Shift+V')
+    await expect
+      .poll(
+        () =>
+          app.evaluate(() => global.input.filter((part) => part.includes('Pasted image')).join('')),
+        { timeout: 30000 }
+      )
+      .not.toBe('')
+    const pastedInput = await app.evaluate(() =>
+      global.input.filter((part) => part.includes('Pasted image')).join('')
+    )
+    expect(pastedInput).not.toMatch(/[\r\n]/)
+    pastedImage = execFileSync(
+      'python3',
+      [
+        '-c',
+        'import shlex,sys;print(shlex.split(sys.argv[1])[0])',
+        pastedInput.replaceAll('\x1b[200~', '').replaceAll('\x1b[201~', '')
+      ],
+      { encoding: 'utf8' }
+    ).trim()
+    expect(pastedImage).toContain('/.local/share/sess/uploads/upload-')
+    const expectedPng = await app.evaluate(({ clipboard }) =>
+      clipboard.readImage().toPNG().toString('base64')
+    )
+    expect(ssh(`base64 < ${quote(pastedImage)}`).replace(/\s/g, '')).toBe(expectedPng)
     console.log(
-      'PASS: real native File drops insert quoted local paths, upload through sess 0.7 to local-vm with exact contents/private permissions, and never press Enter.'
+      'PASS: real native File drops insert quoted local paths and upload through sess 0.7 to local-vm with exact contents/private permissions without pressing Enter; Cmd-V pastes text directly and pastes clipboard images through the same upload path with exact PNG bytes.'
     )
   } finally {
     console.log('Drop feedback:', await p.getByRole('alert').allTextContents())
@@ -116,8 +166,9 @@ const ssh = (command) =>
         for (const t of ws.terminals)
           await request(host, 'terminal_remove', { workspace: ws.id, terminal: t.id })
     await app.close()
-    if (uploaded?.includes('/.local/share/sess/uploads/upload-'))
-      ssh(`rm -rf -- ${quote(path.posix.dirname(uploaded))}`)
+    for (const file of [uploaded, pastedImage])
+      if (file?.includes('/.local/share/sess/uploads/upload-'))
+        ssh(`rm -rf -- ${quote(path.posix.dirname(file))}`)
     if (remoteReady) ssh(`rm -rf -- ${quote(remoteBase)}`)
     fs.rmSync(fixture, { recursive: true, force: true })
   }

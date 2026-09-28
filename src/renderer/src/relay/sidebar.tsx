@@ -49,15 +49,6 @@ export function WorkspaceSidebar({
     <aside className="flex h-full w-full shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-2 p-3">
         <span className="flex-1 text-xs font-medium text-muted-foreground">HOSTS</span>
-        <Button
-          aria-label="Add host"
-          title="Add host"
-          variant="ghost"
-          size="icon-xs"
-          onClick={() => setForm('host')}
-        >
-          <Plus />
-        </Button>
       </div>
       <div className="px-3 pb-3">
         <Input

@@ -1,4 +1,4 @@
-import { copyKey, installTerminalCopy } from './terminal-copy'
+import { copyKey, installTerminalCopy, pasteKey } from './terminal-copy'
 import { installTerminalLinks } from './terminal-links'
 import { ActionMenu, command } from './action-menu'
 import type { OpenFile } from './editor'
@@ -42,6 +42,9 @@ export function SessionTerminal({
   const [menuText, setMenuText] = useState('')
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
+  const transferRef = useRef<((paths: (File | string)[]) => Promise<void>) | null>(null)
+  const pasteRef = useRef<(() => void) | null>(null)
+  const busy = useRef(false)
   useEffect(() => {
     if (!container.current) {
       return
@@ -65,11 +68,57 @@ export function SessionTerminal({
         void window.relay.copyText(term.getSelection()).catch((e) => setCopyError(String(e)))
       }
     }
+    const transfer = async (paths: (File | string)[]) => {
+      const target = instance.current
+      if (!target || busy.current) {
+        return
+      }
+      busy.current = true
+      setDropError('')
+      setDropStatus(host === 'local' ? 'Adding files…' : 'Uploading files…')
+      try {
+        const result = await window.relay.dropFiles(host, workspace, terminal, paths)
+        if (instance.current === target) {
+          target.paste(`${result.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(' ')} `)
+        }
+      } catch (error) {
+        setDropError(String(error))
+      } finally {
+        busy.current = false
+        setDropStatus('')
+      }
+    }
+    const paste = () => {
+      void (async () => {
+        try {
+          const text = await window.relay.readClipboardText()
+          if (text) {
+            instance.current?.paste(text)
+            return
+          }
+          const image = await window.relay.readClipboardImagePath()
+          if (image) {
+            await transfer([image])
+          }
+        } catch (error) {
+          setDropError(String(error))
+        }
+      })()
+    }
+    transferRef.current = transfer
+    pasteRef.current = paste
     term.attachCustomKeyEventHandler((event) => {
       if (copyKey(event)) {
         event.preventDefault()
         if (event.type === 'keydown') {
           copy()
+        }
+        return false
+      }
+      if (pasteKey(event)) {
+        event.preventDefault()
+        if (event.type === 'keydown') {
+          paste()
         }
         return false
       }
@@ -173,10 +222,7 @@ export function SessionTerminal({
         {
           label: 'Paste',
           shortcut: `${command}V`,
-          run: async () => {
-            const text = await window.relay.readClipboardText()
-            instance.current?.paste(text)
-          }
+          run: () => pasteRef.current?.()
         },
         {
           label: 'Select All',
@@ -228,29 +274,7 @@ export function SessionTerminal({
             }
             event.preventDefault()
             event.stopPropagation()
-            const target = instance.current
-            if (!target || dropStatus) {
-              return
-            }
-            setDropError('')
-            setDropStatus(host === 'local' ? 'Adding files…' : 'Uploading files…')
-            try {
-              const paths = await window.relay.dropFiles(
-                host,
-                workspace,
-                terminal,
-                Array.from(event.dataTransfer.files)
-              )
-              if (instance.current === target) {
-                target.paste(
-                  `${paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(' ')} `
-                )
-              }
-            } catch (error) {
-              setDropError(String(error))
-            } finally {
-              setDropStatus('')
-            }
+            await transferRef.current?.(Array.from(event.dataTransfer.files))
           }}
         />
         {dropStatus && (

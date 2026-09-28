@@ -12,10 +12,11 @@ const api: RelayApi = {
       host,
       workspace,
       terminal,
-      files.map((file) => webUtils.getPathForFile(file))
+      files.map((file) => (typeof file === 'string' ? file : webUtils.getPathForFile(file)))
     ),
   copyText: (text) => ipcRenderer.invoke('relay:copy', text),
   readClipboardText: () => ipcRenderer.invoke('relay:clipboard-read'),
+  readClipboardImagePath: () => ipcRenderer.invoke('relay:clipboard-image'),
   getUpdate: () => ipcRenderer.invoke('relay:update:get'),
   runUpdate: () => ipcRenderer.invoke('relay:update:run'),
   onUpdate: (listener) => {

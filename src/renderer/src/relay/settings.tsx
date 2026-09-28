@@ -16,14 +16,24 @@ import {
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { HostSettings } from './settings-hosts'
+import type { Host } from '../../../shared/relay/types'
 export type Appearance = { theme: string; fontSize: number; compact: boolean }
 export function RelaySettings({
   value,
   update,
+  hosts,
+  sessHosts,
+  openAddHost,
+  removeHost,
   close
 }: {
   value: Appearance
   update: (value: Appearance) => void
+  hosts: Host[]
+  sessHosts: Host[]
+  openAddHost: () => void
+  removeHost: (name: string) => Promise<void>
   close: () => void
 }) {
   return (
@@ -38,7 +48,7 @@ export function RelaySettings({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Appearance and application updates.</DialogDescription>
+          <DialogDescription>Hosts, appearance, and application updates.</DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
           <div className="flex items-center justify-between">
@@ -79,6 +89,12 @@ export function RelaySettings({
             />
           </div>
         </div>
+        <HostSettings
+          hosts={hosts}
+          sessHosts={sessHosts}
+          openAdd={openAddHost}
+          remove={removeHost}
+        />
         <UpdateSettings />
       </DialogContent>
     </Dialog>
