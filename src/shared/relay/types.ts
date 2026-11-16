@@ -27,6 +27,7 @@ export type Workspace = {
 }
 export type Snapshot = {
   root: string
+  fingerprint?: string
   hosts: Host[]
   sessRemotes: Host[]
   repos: Repo[]

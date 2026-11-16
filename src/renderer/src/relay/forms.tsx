@@ -17,13 +17,14 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import type { Snapshot, Workspace } from '../../../shared/relay/types'
+import type { Host, Snapshot, Workspace } from '../../../shared/relay/types'
 export type FormKind = 'workspace' | 'repo' | 'host' | 'attach' | 'ticket'
 export function WorkspaceForm({
   kind,
   host,
   snapshot,
   workspace,
+  editHost,
   close,
   done
 }: {
@@ -31,15 +32,18 @@ export function WorkspaceForm({
   host: string
   snapshot: Snapshot
   workspace?: Workspace
+  editHost?: Host
   close: () => void
   done: (workspace?: string) => void
 }) {
-  const [name, setName] = useState(kind === 'ticket' ? workspace?.ticket || '' : '')
+  const [name, setName] = useState(
+    kind === 'ticket' ? workspace?.ticket || '' : editHost?.name || ''
+  )
   const [ticket, setTicket] = useState('')
   const [path, setPath] = useState('')
   const [url, setUrl] = useState('')
-  const [ssh, setSsh] = useState('local-vm')
-  const [root, setRoot] = useState('~/relay')
+  const [ssh, setSsh] = useState(editHost?.ssh || 'local-vm')
+  const [root, setRoot] = useState(editHost?.root || '~/relay')
   const [utility, setUtility] = useState(false)
   const [selected, setSelected] = useState<Record<string, { branch: string; mode: string }>>({})
   const [error, setError] = useState('')
@@ -47,7 +51,7 @@ export function WorkspaceForm({
   const titles = {
     workspace: 'New workspace',
     repo: 'Add repository',
-    host: 'Add host',
+    host: editHost ? 'Save host' : 'Add host',
     attach: 'Attach repositories',
     ticket: 'Attach Linear ticket'
   }
@@ -56,7 +60,19 @@ export function WorkspaceForm({
     setError('')
     try {
       if (kind === 'host') {
-        await window.relay.request('local', 'host_add', { name, ssh, root })
+        await (editHost
+          ? window.relay.request('local', 'host_update', {
+              name: editHost.name,
+              new_name: name,
+              ssh,
+              root
+            })
+          : window.relay.request('local', 'host_add', { name, ssh, root }))
+      }
+      if (kind === 'host' && editHost) {
+        done(name)
+        close()
+        return
       }
       if (kind === 'repo') {
         await window.relay.request(host, 'repo_register', { name, path, url, utility })
@@ -115,7 +131,7 @@ export function WorkspaceForm({
     >
       <DialogContent className="max-h-[85vh] overflow-y-auto scrollbar-sleek">
         <DialogHeader>
-          <DialogTitle>{titles[kind]}</DialogTitle>
+          <DialogTitle>{kind === 'host' && editHost ? 'Edit host' : titles[kind]}</DialogTitle>
           <DialogDescription>
             {kind === 'workspace' || kind === 'attach'
               ? 'Each selected repository gets its own worktree inside this workspace.'

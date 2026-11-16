@@ -11,13 +11,13 @@ pnpm start
 pnpm dev
 ```
 
-Requires Python 3, Git, and tmux on execution hosts. `gh` is required for GitHub cloning and PR status. Native Windows sess execution is not supported in this v1.
+Requires Python 3, Git, and dtach on execution hosts. `gh` is required for GitHub cloning and PR status. Native Windows sess execution is not supported in this v1.
 
 Local data defaults to `~/Documents/Relay`; SSH hosts default to `~/relay`. Set `RELAY_ROOT` to isolate local workspace data and `RELAY_USER_DATA_PATH` to isolate desktop preferences. `ORCA_BACKGROUND_LAUNCH=1` keeps test windows hidden.
 
 ## Architecture
 
-Each host owns its backend process, registry, workspace manifests, Git operations, CLI, and actual sess/tmux sessions. The Electron main process routes JSON requests to a persistent local Python worker or a worker bootstrapped over SSH. PR/Linear requests use a separate worker so network calls do not block session attachment. Losing an attachment does not kill its sess owner. Explicit End session stops it; an ended session is not silently restarted.
+Each host owns its backend process, registry, workspace manifests, Git operations, CLI, and actual dtach sessions. The Electron main process routes JSON requests to a persistent local Python worker or a worker bootstrapped over SSH. PR/Linear requests use a separate worker so network calls do not block session attachment. Losing an attachment does not kill its sess owner. Explicit End session stops it; an ended session is not silently restarted.
 
 ```text
 relay/

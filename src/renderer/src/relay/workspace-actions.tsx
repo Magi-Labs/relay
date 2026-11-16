@@ -46,6 +46,8 @@ export function useWorkspaceActions({
       )
       select(targetHost, w.id, result.id)
       refresh()
+    } catch (e) {
+      report(e)
     } finally {
       setPending(false)
     }

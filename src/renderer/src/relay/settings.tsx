@@ -18,13 +18,15 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { HostSettings } from './settings-hosts'
 import type { Host } from '../../../shared/relay/types'
-export type Appearance = { theme: string; fontSize: number; compact: boolean }
+import { themeChoices, type ThemeChoice } from './theme'
+export type Appearance = { theme: ThemeChoice; fontSize: number; compact: boolean }
 export function RelaySettings({
   value,
   update,
   hosts,
   sessHosts,
   openAddHost,
+  editHost,
   removeHost,
   close
 }: {
@@ -33,6 +35,7 @@ export function RelaySettings({
   hosts: Host[]
   sessHosts: Host[]
   openAddHost: () => void
+  editHost: (host: Host) => void
   removeHost: (name: string) => Promise<void>
   close: () => void
 }) {
@@ -53,13 +56,19 @@ export function RelaySettings({
         <div className="space-y-5">
           <div className="flex items-center justify-between">
             <Label>Theme</Label>
-            <Select value={value.theme} onValueChange={(theme) => update({ ...value, theme })}>
+            <Select
+              value={value.theme}
+              onValueChange={(theme) =>
+                update({ ...value, theme: themeChoices.find((c) => c === theme) || 'system' })
+              }
+            >
               <SelectTrigger className="w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="dark">Dark</SelectItem>
+                <SelectItem value="system">Match system</SelectItem>
                 <SelectItem value="light">Light</SelectItem>
+                <SelectItem value="dark">Dark</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -93,6 +102,7 @@ export function RelaySettings({
           hosts={hosts}
           sessHosts={sessHosts}
           openAdd={openAddHost}
+          edit={editHost}
           remove={removeHost}
         />
         <UpdateSettings />
@@ -105,11 +115,11 @@ export function readAppearance(): Appearance {
   try {
     const saved = JSON.parse(localStorage.getItem('relay.appearance') || '{}')
     return {
-      theme: saved.theme === 'light' ? 'light' : 'dark',
+      theme: themeChoices.find((c) => c === saved.theme) || 'system',
       fontSize: Math.max(10, Math.min(22, Number(saved.fontSize) || 13)),
       compact: saved.compact === true
     }
   } catch {
-    return { theme: 'dark', fontSize: 13, compact: false }
+    return { theme: 'system', fontSize: 13, compact: false }
   }
 }

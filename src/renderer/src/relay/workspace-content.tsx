@@ -1,3 +1,4 @@
+import type { Theme } from './theme'
 import { fileKey } from './file-tabs'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import type { Workspace, Session } from '../../../shared/relay/types'
@@ -56,7 +57,7 @@ export function WorkspaceContent({
   workspace?: Workspace
   terminal?: Session
   file?: OpenFile
-  theme: string
+  theme: Theme
   fontSize: number
   loading: boolean
   select: (id: string) => void

@@ -7,11 +7,13 @@ export function HostSettings({
   hosts,
   sessHosts,
   openAdd,
+  edit,
   remove
 }: {
   hosts: Host[]
   sessHosts: Host[]
   openAdd: () => void
+  edit: (host: Host) => void
   remove: (name: string) => Promise<void>
 }) {
   const [confirming, setConfirming] = useState('')
@@ -66,9 +68,14 @@ export function HostSettings({
                 </Button>
               </>
             ) : (
-              <Button size="sm" variant="ghost" onClick={() => setConfirming(host.name)}>
-                Remove
-              </Button>
+              <>
+                <Button size="sm" variant="ghost" onClick={() => edit(host)}>
+                  Edit
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirming(host.name)}>
+                  Remove
+                </Button>
+              </>
             )
           ) : (
             <span className="text-xs text-muted-foreground">From sess</span>

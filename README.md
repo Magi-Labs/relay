@@ -25,20 +25,20 @@ Phone pairing, automation dashboards, task management, account onboarding, and u
 **Apple Silicon · macOS 12 or newer**
 
 ```sh
-brew install --cask deepaksilaych/tap/relay
+brew install --cask deepaksilaych/tap/relay-workspaces
 # Update an existing installation:
-brew update && brew upgrade --cask relay
+brew update && brew upgrade --cask relay-workspaces
 ```
 
 You can also download a DMG or ZIP from [Releases](https://github.com/Magi-Labs/relay/releases). Current builds are ad-hoc signed and strictly verified, but **not notarized by Apple**. macOS may require approval in System Settings → Privacy & Security. Automatic in-app installation remains disabled.
 
-Homebrew installs Git, GitHub CLI, tmux, and Python for local execution. Install your coding-agent CLI separately. Remote hosts need their own tools and an SSH alias; Relay can use sess presets. Native Windows sessions and Intel Mac/Linux desktop installers are not currently supported.
+Homebrew installs Git, GitHub CLI, dtach, and Python for local execution. Install your coding-agent CLI separately. Remote hosts need their own tools and an SSH alias; Relay can use sess presets. Native Windows sessions and Intel Mac/Linux desktop installers are not currently supported.
 
 ## How it works
 
 1. **Choose an execution host.** Work locally or connect to a VM through SSH. Every host has a permanent `Genral` workspace.
 2. **Create a task workspace.** Select repositories and new or existing branches. Relay creates one worktree per selected repository inside the workspace folder. You can also start blank.
-3. **Run agents in terminals.** Each terminal attaches to a real sess/tmux session on its host. Split panes, reorder tabs, and work across repositories from the same task context.
+3. **Run agents in terminals.** Each terminal attaches to a persistent dtach session on its host. Split panes, reorder tabs, and work across repositories from the same task context.
 4. **Inspect and review.** Open files and diffs as tabs. Stage, unstage, and commit in the relevant repository. GitHub PR state comes from `gh`; Linear status comes from authenticated `linear` CLI requests.
 5. **Reconnect later.** Closing the desktop app detaches its terminals while host sessions keep running. Explicitly ending a terminal stops that session. Losing SSH connectivity makes its state unknown; it does not mean the agent exited.
 
@@ -47,8 +47,8 @@ flowchart LR
   UI["Relay desktop: React + xterm + Monaco"] --> E[Electron bridge]
   E --> L[Local Python backend]
   E -->|SSH| V[VM Python backend]
-  L --> LS[sess / tmux sessions]
-  V --> VS[sess / tmux sessions]
+  L --> LS[dtach sessions]
+  V --> VS[dtach sessions]
   L --> LR[Repository worktrees + Git]
   V --> VR[Repository worktrees + Git]
   L --> LC[gh / linear CLI]
@@ -170,7 +170,7 @@ Relay was previously called Magi. Version 0.3.0 moves the default local data dir
 
 Drop up to eight regular files (25 MiB total) into a terminal. Local terminals receive quoted local paths. VM terminals use the bundled, checksum-verified sess 0.7.0 client to upload over SSH and insert remote paths. Relay never presses Enter. The first transfer updates the selected host's sess helper using `sess init`. Uploaded files are private, checksum-verified, and retained under `~/.local/share/sess/uploads/` until deleted.
 
-sess 0.7.0 uses zmx for its own new sessions. Relay currently retains its tmux session adapter to preserve running agents and terminal scrolling; file uploads use the new sess client independently. Live tmux sessions cannot be converted into zmx sessions. Clipboard image pixels and folder drops are not supported.
+Relay runs new terminals under dtach; remote hosts need `dtach` installed (`apt install dtach`). Terminals started under tmux by earlier versions stay attachable until they end, but Relay no longer creates tmux sessions. File uploads use the sess client independently. Clipboard image pixels and folder drops are not supported.
 
 ## Project origins
 

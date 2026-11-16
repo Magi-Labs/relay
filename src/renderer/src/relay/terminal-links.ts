@@ -16,6 +16,10 @@ export function installTerminalLinks(
     held = false,
     hovered: ILink | undefined
   const decorate = () => {
+    // While the link modifier is held, keep clicks local so mouse-tracking apps (Claude, tmux) don't swallow them.
+    if (term.options.mouseEventsRequireAlt !== held) {
+      term.options.mouseEventsRequireAlt = held
+    }
     if (hovered?.decorations) {
       hovered.decorations.underline = held
       hovered.decorations.pointerCursor = held

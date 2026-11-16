@@ -1,3 +1,4 @@
+import type { Theme } from './theme'
 import { TerminalAgentIcon } from './agent-icon'
 import { ActionMenu } from './action-menu'
 import { useInteractions } from './workspace-actions'
@@ -51,7 +52,7 @@ export function TerminalLayout({
   workspace: Workspace
   terminal: string
   fontSize: number
-  theme: string
+  theme: Theme
   select: (id: string) => void
   refresh: () => void
 }) {
@@ -117,6 +118,14 @@ export function TerminalLayout({
               fontSize={fontSize}
               theme={theme}
               active={visible && pane.terminal === terminal}
+              close={() =>
+                window.relay
+                  .request(host, 'terminal_remove', {
+                    workspace: workspace.id,
+                    terminal: pane.terminal
+                  })
+                  .then(refresh)
+              }
             />
           </div>
         </ActionMenu>

@@ -2,7 +2,7 @@ import { ComparisonControl } from './comparison-control'
 import { GitStatusIcon, RepoStatusIcon } from './git-status-icon'
 import { Directory, useFileTree, type Tree } from './file-tree'
 import { ActionMenu, copyPath } from './action-menu'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -228,6 +228,20 @@ function Repository({ repo, props, view }: { repo: RepoStatus; props: Props; vie
 }
 export function Repositories(props: Props) {
   const tree = useFileTree(props.host, props.workspace, props.activeFile || props.requestView?.file)
+  const reloadTree = tree.refresh
+  // Files added or removed by agents and shells show up as git changes; reload the tree then.
+  const changed = JSON.stringify(props.statuses.map((r) => r.files.map((f) => f.path)))
+  const seen = useRef(changed)
+  useEffect(() => {
+    if (seen.current !== changed) {
+      seen.current = changed
+      reloadTree()
+    }
+  }, [changed, reloadTree])
+  useEffect(() => {
+    window.addEventListener('focus', reloadTree)
+    return () => window.removeEventListener('focus', reloadTree)
+  }, [reloadTree])
   const [view, setView] = useState(props.workspace.permanent ? 'files' : 'git')
   useEffect(() => {
     if (props.requestView) {

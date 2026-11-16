@@ -88,7 +88,7 @@ class HostClient {
         `${JSON.stringify({
           root: host.root,
           files: Object.fromEntries(
-            ['relay.py', 'sess-legacy', 'SESS-LICENSE', 'RELAY-CLI.md'].map((name) => [
+            ['relay.py', 'RELAY-CLI.md'].map((name) => [
               name,
               readFileSync(join(resources, name), 'utf8')
             ])
@@ -140,6 +140,13 @@ export class Hosts {
     }
     return host
   }
+  // Only the execution host can say a shell ended; losing the attach alone proves nothing.
+  endState(name: string, workspace: string, terminal: string): Promise<'exited' | 'unverifiable'> {
+    return this.request<{ state: string }>(name, 'terminal_state', { workspace, terminal }).then(
+      (result) => (result.state === 'exited' ? 'exited' : 'unverifiable'),
+      () => 'unverifiable'
+    )
+  }
   async request<T>(name: string, op: string, args?: Record<string, unknown>): Promise<T> {
     const channel = op === 'integrations' ? `${name}:integrations` : name
     let client = this.clients.get(channel)
@@ -151,7 +158,18 @@ export class Hosts {
         this.clients.set(channel, client)
       }
     }
-    return client.request<T>(op, args)
+    const result = await client.request<T>(op, args)
+    if ((op === 'host_update' || op === 'host_remove') && typeof args?.name === 'string') {
+      this.forget(args.name)
+    }
+    return result
+  }
+  // Drops cached connections so edited SSH settings take effect on the next request.
+  forget(name: string): void {
+    for (const channel of [name, `${name}:integrations`]) {
+      this.clients.get(channel)?.close()
+      this.clients.delete(channel)
+    }
   }
   close(): void {
     for (const client of this.clients.values()) {

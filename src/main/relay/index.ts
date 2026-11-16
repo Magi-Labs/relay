@@ -133,10 +133,15 @@ if (ownsLock) {
       terminals.set(key, pty)
       pty.onData((data) => emit({ key, data }))
       pty.onExit(() => {
-        if (terminals.get(key) === pty) {
-          terminals.delete(key)
-          emit({ key, state: 'unverifiable' })
+        if (terminals.get(key) !== pty) {
+          return
         }
+        terminals.delete(key)
+        void hosts.endState(hostName, workspace, terminal).then((state) => {
+          if (!terminals.has(key)) {
+            emit({ key, state })
+          }
+        })
       })
       emit({ key, state: 'live' })
       return key

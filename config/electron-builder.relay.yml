@@ -4,7 +4,7 @@ artifactName: Relay-${version}-${arch}.${ext}
 extraMetadata:
   relayAutoUpdate: false
   name: relay
-  version: 0.3.6
+  version: 0.4.0
   main: out/relay/main/index.js
 npmRebuild: false
 directories:
@@ -19,8 +19,6 @@ extraResources:
     to: relay/backend
     filter:
       - relay.py
-      - sess-legacy
-      - SESS-LICENSE
       - RELAY-CLI.md
   - from: resources/relay/bin
     to: relay/bin

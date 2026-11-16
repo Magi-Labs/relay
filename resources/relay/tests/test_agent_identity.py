@@ -36,4 +36,4 @@ class AgentIdentityTests(unittest.TestCase):
 
     def test_unavailable_probe_does_not_claim_exit(self):
         with mock.patch.object(test_backend.relay, 'run', side_effect=ValueError('unreachable')):
-            self.assertIsNone(test_backend.relay.Backend.terminal_agents(None, [{'id':'a','started':True}]))
+            self.assertIsNone(test_backend.relay.Backend.terminal_agents(mock.Mock(root='/nonexistent'), [{'id':'a','started':True}]))

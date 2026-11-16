@@ -45,6 +45,19 @@ class WorkspaceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 service.host_remove('qa-box')
 
+    def test_host_update_edits_fields_and_keeps_names_unique(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = relay.Backend(Path(folder))
+            service.host_add('qa-box', 'user@host', '~/relay')
+            service.host_add('other', 'other-vm')
+            service.host_update('qa-box', ssh='qa-alias')
+            self.assertEqual(service.snapshot()['hosts'][0], {'name': 'qa-box', 'ssh': 'qa-alias', 'root': '~/relay'})
+            service.host_update('qa-box', new_name='qa', root='/srv/relay')
+            self.assertEqual(service.snapshot()['hosts'][0], {'name': 'qa', 'ssh': 'qa-alias', 'root': '/srv/relay'})
+            for bad in ({'new_name': 'other'}, {'new_name': 'local'}, {'ssh': '-oProxyCommand=x'}, {'root': 'relative'}):
+                with self.assertRaises(ValueError): service.host_update('qa', **bad)
+            with self.assertRaises(ValueError): service.host_update('missing', ssh='x')
+
     def test_permanent_general_per_host_and_restart(self):
         general = self.backend.snapshot()['workspaces'][0]
         self.assertEqual((general['id'], general['name'], general['permanent']), ('genral', 'Genral', True))
@@ -191,24 +204,29 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual([r.returncode for r in results],[0,0],str(results))
         self.assertEqual(len(self.backend.ws(ws['id'])['repos']),2)
 
-    def test_terminal_reuses_live_tmux_and_exports_cli(self):
-        ws=self.create([]);t=ws['terminals'][0];session='relay-'+t['id']
-        self.addCleanup(lambda:subprocess.run(['tmux','kill-session','-t','='+session],capture_output=True))
+    @unittest.skipUnless(relay.shutil.which('dtach'), 'dtach is not installed')
+    def test_terminal_reuses_live_dtach_and_exports_cli(self):
+        ws=self.create([]);t=ws['terminals'][0];session=relay.DtachSession(self.backend.root,t['id'])
+        self.addCleanup(session.kill)
         prepared=self.backend.terminal_prepare(ws['id'],t['id'])
-        target=relay.text(relay.run(['tmux','list-panes','-s','-t',session,'-F','#{pane_id}'])).splitlines()[0]
-        first=relay.run(['tmux','display-message','-p','-t',target,'#{pane_pid}'])
+        self.assertEqual(prepared['args'][1:2],['--attach'])
+        deadline=time.monotonic()+8
+        while not session.pid() and time.monotonic()<deadline: time.sleep(.05)
+        first=session.pid()
         self.backend.terminal_prepare(ws['id'],t['id'])
-        self.assertEqual(first,relay.run(['tmux','display-message','-p','-t',target,'#{pane_pid}']))
+        self.assertEqual(first,session.pid())
         self.assertEqual(prepared['env']['RELAY_WORKSPACE'],ws['id'])
-        command='echo RELAY_READY; printf "%s\\n" "$RELAY_ROOT"; relay status --json'
-        relay.run(['tmux','send-keys','-t',target,command,'Enter'])
+        self.backend.terminal_send(ws['id'],t['id'],input_text='echo RELAY_READY; printf "%s\\n" "$RELAY_ROOT"; relay status --json',enter=True)
         deadline=time.monotonic()+8
         content=''
         while time.monotonic()<deadline:
-            content=relay.text(relay.run(['tmux','capture-pane','-p','-t',target,'-S','-100']))
+            content=self.backend.terminal_read(ws['id'],t['id'],lines=100)['output']
             if '"ok": true' in content:break
             time.sleep(.1)
         self.assertIn('"ok": true',content)
+        self.backend.terminal_remove(ws['id'],t['id'])
+        self.assertFalse(session.live())
+        with self.assertRaises(ProcessLookupError): os.kill(first,0)
 
     def test_rpc_multiple_requests_and_errors(self):
         reqs=[{'op':'snapshot'},{'op':'unknown'},{'op':'snapshot'}]

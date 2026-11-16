@@ -18,9 +18,9 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(third['cwd'], first['cwd'])
         self.backend.terminal_resize(ws['id'], tree['id'], 0.7)
         self.assertEqual(test_backend.relay.Backend(self.backend.root).ws(ws['id'])['layouts'][first['id']]['ratio'], 0.7)
-        with mock.patch.object(test_backend.relay, 'run') as run:
+        with mock.patch.object(test_backend.relay, 'legacy_tmux_session', return_value=None), mock.patch.object(test_backend.relay.DtachSession, 'kill', autospec=True) as kill:
             self.backend.terminal_remove(ws['id'], second['id'])
-            self.assertEqual(run.call_args.args[0], ['tmux', 'kill-session', '-t', '=relay-' + second['id']])
+            self.assertEqual(kill.call_args.args[0].base.name, second['id'])
             self.assertEqual(self.backend.ws(ws['id'])['layouts'][first['id']]['second'], {'terminal': third['id']})
             self.backend.terminal_remove(ws['id'], first['id'])
         self.assertEqual(self.backend.ws(ws['id'])['layouts'][first['id']], {'terminal': third['id']})

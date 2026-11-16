@@ -14,32 +14,35 @@ import { WorkspaceSidebar } from './sidebar'
 import { StatusBar } from './status-bar'
 import { useHostSections, visibleSections } from './host-sections'
 import { useWorkspaceTelemetry } from './workspace-telemetry'
-import { useCallback, useEffect, useState, useRef, useMemo } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type { Host, Snapshot } from '../../../shared/relay/types'
+import type { Host } from '../../../shared/relay/types'
+import { useHostSnapshots } from './host-snapshots'
 import { WorkspaceForm, type FormKind } from './forms'
 import { RelaySettings, readAppearance } from './settings'
+import { useResolvedTheme } from './theme'
 import { Repositories } from './repositories'
 export function RelayShell() {
   const panels = usePanels()
   const navigation = useNavigation()
   const { host, workspaceId, terminalId, setTerminalId, validate } = navigation
-  const [hosts, setHosts] = useState<Host[]>([])
-  const [snapshots, setSnapshots] = useState<Record<string, Snapshot>>({})
-  const [hostErrors, setHostErrors] = useState<Record<string, string>>({})
-  const snapshot = snapshots[host]
-  const snapshotsRef = useRef(snapshots)
-  snapshotsRef.current = snapshots
-
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
   const [revision, setRevision] = useState(0)
-  const [form, setForm] = useState<{ kind: FormKind; host?: string }>()
+  const refresh = useCallback(() => setRevision((value) => value + 1), [])
+  const { hosts, snapshots, setSnapshots, snapshotsRef, hostErrors, loading } = useHostSnapshots(
+    revision,
+    refresh,
+    validate,
+    setError
+  )
+  const snapshot = snapshots[host]
+  const [form, setForm] = useState<{ kind: FormKind; host?: string; editHost?: Host }>()
   const [repositoriesOpen, setRepositoriesOpen] = useState(false)
   const [settings, setSettings] = useState(false)
   const [appearance, setAppearance] = useState(readAppearance)
+  const theme = useResolvedTheme(appearance.theme)
   const [query, setQuery] = useState('')
   const report = useCallback((error: unknown) => setError(String(error)), [])
   const fileTabs = useFileTabs(JSON.stringify([host, workspaceId]), host, workspaceId, report)
@@ -59,66 +62,12 @@ export function RelayShell() {
     integrations,
     reset: resetTelemetry
   } = useWorkspaceTelemetry(host, workspace, revision, report)
-  const refresh = useCallback(() => setRevision((value) => value + 1), [])
   const names = useMemo(() => ['local', ...hosts.map((h) => h.name)], [hosts])
   const sidebar = useHostSections(names)
   const sections = visibleSections(sidebar.order, snapshots, hostErrors, query)
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', appearance.theme === 'dark')
     localStorage.setItem('relay.appearance', JSON.stringify(appearance))
   }, [appearance])
-  useEffect(() => {
-    let active = true
-    setLoading(!Object.keys(snapshotsRef.current).length)
-    setError('')
-    window.relay
-      .request<Snapshot>('local', 'snapshot')
-      .then(async (localSnapshot) => {
-        const remotes = [
-          ...localSnapshot.hosts,
-          ...localSnapshot.sessRemotes.filter(
-            (h) => !localSnapshot.hosts.some((r) => r.name === h.name)
-          )
-        ]
-        const loaded: Record<string, Snapshot> = { local: localSnapshot }
-        const failures: Record<string, string> = {}
-        await Promise.all(
-          remotes.map((h) =>
-            window.relay
-              .request<Snapshot>(h.name, 'snapshot')
-              .then((result) => {
-                loaded[h.name] = result
-              })
-              .catch((e) => {
-                failures[h.name] = String(e)
-              })
-          )
-        )
-        if (!active) {
-          return
-        }
-        setHosts(remotes)
-        setSnapshots(loaded)
-        setHostErrors(failures)
-        for (const [name, result] of Object.entries(loaded)) {
-          validate(
-            name,
-            result.workspaces.map((w) => w.id)
-          )
-        }
-        setLoading(false)
-      })
-      .catch((e) => {
-        if (active) {
-          setError(String(e))
-          setLoading(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [revision, report, validate])
-
   const openWorkspace = useCallback(
     (targetHost: string, id: string, terminal?: string) => {
       const changed = targetHost !== host || id !== workspaceId
@@ -230,6 +179,10 @@ export function RelayShell() {
                     setForm={openForm}
                     openRepositories={() => setRepositoriesOpen(true)}
                     openSettings={() => setSettings(true)}
+                    theme={theme}
+                    toggleTheme={() =>
+                      setAppearance((a) => ({ ...a, theme: theme === 'dark' ? 'light' : 'dark' }))
+                    }
                   />
                 </ResizableSidebar>
                 <main className="flex min-w-0 flex-1 flex-col">
@@ -276,7 +229,7 @@ export function RelayShell() {
                     workspace={workspace}
                     terminal={terminal}
                     file={file}
-                    theme={appearance.theme}
+                    theme={theme}
                     fontSize={appearance.fontSize}
                     loading={loading}
                     select={(id) => {
@@ -336,9 +289,15 @@ export function RelayShell() {
                   host={formHost}
                   snapshot={formSnapshot}
                   workspace={workspace}
+                  editHost={form.editHost}
                   close={() => setForm(undefined)}
                   done={(id) => {
-                    if (id) {
+                    if (form.editHost) {
+                      // A renamed host keeps its workspaces; follow it if it was selected.
+                      if (id && host === form.editHost.name && id !== host) {
+                        openWorkspace(id, workspaceId)
+                      }
+                    } else if (id) {
                       openWorkspace(formHost, id)
                     }
                     refresh()
@@ -351,7 +310,8 @@ export function RelayShell() {
                   update={setAppearance}
                   hosts={snapshots.local?.hosts || []}
                   sessHosts={snapshots.local?.sessRemotes || []}
-                  openAddHost={() => openForm('host')}
+                  openAddHost={() => openForm('host', 'local')}
+                  editHost={(target) => setForm({ kind: 'host', host: 'local', editHost: target })}
                   removeHost={async (name) => {
                     await window.relay.request('local', 'host_remove', { name })
                     if (host === name) {

@@ -5,6 +5,7 @@ import type { OpenFile } from './editor'
 import { shiftEnterInput } from '../components/terminal-pane/terminal-shift-enter-input'
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
+import { terminalTheme, type Theme } from './theme'
 import { FitAddon } from '@xterm/addon-fit'
 import { Button } from '@/components/ui/button'
 export function SessionTerminal({
@@ -14,21 +15,24 @@ export function SessionTerminal({
   terminal,
   fontSize,
   theme,
-  active = true
+  active = true,
+  close
 }: {
   openFile: (file: OpenFile) => void
   host: string
   workspace: string
   terminal: string
   fontSize: number
-  theme: string
+  theme: Theme
   active?: boolean
+  close: () => Promise<unknown>
 }) {
   const open = useRef(openFile)
   open.current = openFile
   const focused = useRef(active)
   focused.current = active
   const instance = useRef<Terminal | null>(null)
+  const themeRef = useRef(theme)
   useEffect(() => {
     if (active && !document.querySelector('[data-relay-renaming]')) {
       instance.current?.focus()
@@ -41,6 +45,7 @@ export function SessionTerminal({
   const [dropStatus, setDropStatus] = useState('')
   const [menuText, setMenuText] = useState('')
   const [error, setError] = useState('')
+  const [ended, setEnded] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const transferRef = useRef<((paths: (File | string)[]) => Promise<void>) | null>(null)
   const pasteRef = useRef<(() => void) | null>(null)
@@ -51,17 +56,14 @@ export function SessionTerminal({
     }
     let cancelled = false
     const key = JSON.stringify([host, workspace, terminal])
-    const style = getComputedStyle(document.documentElement)
     const term = new Terminal({
       fontSize,
       fontFamily: 'Menlo, Monaco, monospace',
       cursorBlink: true,
-      mouseEventsRequireAlt: true,
+      // Apps that enable mouse tracking (e.g. Claude) get clicks; Option-drag (Shift elsewhere) still selects.
+      macOptionClickForcesSelection: true,
       scrollback: 10000,
-      theme: {
-        background: style.getPropertyValue('--background').trim(),
-        foreground: style.getPropertyValue('--foreground').trim()
-      }
+      theme: terminalTheme(themeRef.current)
     })
     const copy = () => {
       if (term.hasSelection()) {
@@ -162,6 +164,8 @@ export function SessionTerminal({
       }
       if (event.state === 'unverifiable') {
         setError('Connection lost. The session may still be running. Reconnect to check.')
+      } else if (event.state === 'exited') {
+        setEnded(true)
       }
     })
     const input = term.onData((data) => window.relay.write(key, data))
@@ -177,6 +181,7 @@ export function SessionTerminal({
     })
     resize.observe(container.current)
     setError('')
+    setEnded(false)
     window.relay
       .attach(host, workspace, terminal, term.cols, term.rows)
       .then(() => {
@@ -190,7 +195,11 @@ export function SessionTerminal({
       })
       .catch((error) => {
         if (!cancelled) {
-          setError(String(error))
+          if (String(error).includes('session has exited')) {
+            setEnded(true)
+          } else {
+            setError(String(error))
+          }
         }
       })
     return () => {
@@ -205,7 +214,14 @@ export function SessionTerminal({
       instance.current = null
       term.dispose()
     }
-  }, [host, workspace, terminal, fontSize, theme, attempt])
+  }, [host, workspace, terminal, fontSize, attempt])
+  // Recolor in place; recreating the terminal would reattach the session.
+  useEffect(() => {
+    themeRef.current = theme
+    if (instance.current) {
+      instance.current.options.theme = terminalTheme(theme)
+    }
+  }, [theme])
   return (
     <ActionMenu
       actions={[
@@ -309,7 +325,26 @@ export function SessionTerminal({
             </Button>
           </div>
         )}
-        {error && (
+        {ended && (
+          <div
+            role="status"
+            className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md border bg-popover p-3 text-sm"
+          >
+            <span className="flex-1">This session has ended.</span>
+            <Button
+              size="sm"
+              onClick={() =>
+                void close().catch((e) => {
+                  setEnded(false)
+                  setError(String(e))
+                })
+              }
+            >
+              Close tab
+            </Button>
+          </div>
+        )}
+        {error && !ended && (
           <div
             role="alert"
             className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md border bg-popover p-3 text-sm"

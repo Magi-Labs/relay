@@ -19,7 +19,7 @@ import time
 import uuid
 from urllib.parse import urlsplit, unquote
 
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 DEFAULT_PREFERENCES = {
     "theme": "graphite", "accent": "mint", "font_family": "system",
     "font_size": 13, "line_height": 1.35, "terminal_padding": 18,
@@ -206,11 +206,189 @@ def parse_status(data):
 
 
 def session_name(terminal):
+    return legacy_tmux_session(terminal) or "relay-" + ident(terminal)
+
+
+def utf8_locale():
+    return next((os.environ[k] for k in ("LC_ALL", "LC_CTYPE", "LANG") if "UTF-8" in os.environ.get(k, "").upper().replace("UTF8", "UTF-8")), "en_US.UTF-8")
+
+
+def legacy_tmux_session(terminal):
+    """Sessions created before dtach stay reachable until they end; Relay never creates tmux sessions."""
     terminal = ident(terminal)
-    legacy = "magi-" + terminal
-    if subprocess.run(["tmux", "has-session", "-t", "=" + legacy], capture_output=True).returncode == 0:
-        return legacy
-    return "relay-" + terminal
+    if not shutil.which("tmux"): return None
+    for name in ("relay-" + terminal, "magi-" + terminal):
+        if subprocess.run(["tmux", "has-session", "-t", "=" + name], capture_output=True).returncode == 0: return name
+    return None
+
+
+LOG_MAX, LOG_KEEP, REPLAY_BYTES = 4 << 20, 2 << 20, 512 << 10
+# Queries a fresh xterm would answer into the live app's stdin when old output is replayed.
+TERMINAL_QUERY = re.compile(rb"\x1b\[[>=?]?[\d;]*[cn]|\x1b\[\??[\d;]*\$p|\x1b\[>[\d;]*q|\x1b\[\?u|\x1b\[[\d;]*t"
+                            rb"|\x1b\][\d;]*;\?(?:\x07|\x1b\\)|\x1bP[+$]q.*?\x1b\\", re.S)
+SCREEN_TOKEN = re.compile(r"\x1b\[([?>=!]?)([\d;:]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[PX^_].*?(?:\x1b\\|\Z)"
+                          r"|\x1b[()*+#%].|\x1b(.)|([\r\n\b\t])|([^\x1b\r\n\b\t]+)", re.S)
+
+
+class DtachSession:
+    """A dtach socket owning a Relay pty host, which logs output and records the shell pid."""
+    def __init__(self, root, terminal):
+        folder = Path(root) / "utils" / "term"
+        self.base = folder / ident(terminal)
+        self.sock, self.log, self.pids = (self.base.with_suffix(s) for s in (".sock", ".log", ".pid"))
+        if len(str(self.sock)) > 100:
+            # Unix socket paths are capped near 104 bytes; fall back to a private per-user directory.
+            short = Path(tempfile.gettempdir()) / f"relay-{os.getuid()}"
+            short.mkdir(mode=0o700, exist_ok=True)
+            if short.stat().st_uid != os.getuid() or short.stat().st_mode & 0o077: raise ValueError("Unsafe terminal socket directory: " + str(short))
+            self.sock = short / (hashlib.sha256(str(self.base).encode()).hexdigest()[:20] + ".sock")
+
+    def live(self):
+        import socket
+        with socket.socket(socket.AF_UNIX) as s:
+            try: s.connect(str(self.sock)); return True
+            except FileNotFoundError: return False
+            except ConnectionRefusedError:
+                self.sock.unlink(missing_ok=True)
+                return False
+
+    def require_live(self):
+        if not self.live(): raise ValueError("Terminal session is not live")
+
+    def create(self, argv, cwd, env):
+        if not shutil.which("dtach"): raise ValueError("dtach is required. Install it with brew install dtach (Mac), or apt install dtach on the VM.")
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        self.log.unlink(missing_ok=True)
+        self.pids.unlink(missing_ok=True)
+        host = [sys.executable, str(Path(__file__).resolve()), "--pty-host", str(self.log), str(self.pids), "--"]
+        run(["dtach", "-n", self.sock, *host, *argv], cwd=cwd, env=env)
+
+    def attach_command(self):
+        return [sys.executable, str(Path(__file__).resolve()), "--attach", str(self.sock), str(self.log)]
+
+    def pid(self):
+        try: return int(self.pids.read_text().split()[1])
+        except (OSError, IndexError, ValueError): return None
+
+    def cwd(self):
+        pid = self.pid()
+        if not pid: raise ValueError("Terminal directory is unavailable")
+        if Path("/proc", str(pid)).exists(): return os.readlink(f"/proc/{pid}/cwd")
+        out = text(run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], ok=(0, 1)))
+        cwd = next((line[1:] for line in out.splitlines() if line.startswith("n")), "")
+        if not cwd: raise ValueError("Terminal directory is unavailable")
+        return cwd
+
+    def read(self, lines):
+        size = self.columns_rows()
+        data = tail_bytes(self.log, LOG_KEEP)
+        return "\n".join(render_screen(data, *size)[-lines:])
+
+    def columns_rows(self):
+        try:
+            cols, rows = map(int, self.pids.read_text().split()[2:4])
+            return max(cols, 2), max(rows, 2)
+        except (OSError, ValueError): return 80, 24
+
+    def send(self, data):
+        if not shutil.which("dtach"): raise ValueError("dtach is required")
+        p = subprocess.run(["dtach", "-p", str(self.sock)], input=data, capture_output=True, timeout=10)
+        if p.returncode: raise ValueError(text(p.stderr) or "Could not send input to the terminal")
+
+    def kill(self):
+        import signal
+        try: host, shell = map(int, self.pids.read_text().split()[:2])
+        except (OSError, ValueError): host = shell = None
+        # Closing the pty master hangs up the whole session, like closing a terminal window.
+        for pid, sig in ((host, signal.SIGTERM), (shell, signal.SIGHUP)):
+            if pid:
+                with contextlib.suppress(OSError): os.kill(pid, sig)
+        for _ in range(50):
+            if not self.live(): break
+            time.sleep(.02)
+        for path in (self.sock, self.log, self.pids): path.unlink(missing_ok=True)
+
+
+def tail_bytes(path, limit):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - limit))
+            data = f.read()
+    except OSError: return b""
+    # Start on a line boundary so replay never begins inside an escape sequence.
+    return data[data.find(b"\n") + 1:] if size > limit and b"\n" in data else data
+
+
+def render_screen(data, cols, rows):
+    """Small VT model for `terminal read`: enough cursor and erase handling to collapse TUI redraws."""
+    lines, main, row, col, saved = [[]], None, 0, 0, (0, 0)
+    top = lambda: max(0, len(lines) - rows)
+    def goto(r, c):
+        nonlocal row, col
+        row, col = max(0, r), max(0, min(c, cols - 1))
+        while len(lines) <= row: lines.append([])
+    for m in SCREEN_TOKEN.finditer(data.decode("utf-8", "replace")):
+        prefix, params, final, esc, control, chunk = m.groups()
+        if chunk:
+            for ch in chunk:
+                if ch < " " or ch == "\x7f": continue
+                if col >= cols: goto(row + 1, 0)
+                line = lines[row]
+                line.extend(" " * (col - len(line)))
+                if col < len(line): line[col] = ch
+                else: line.append(ch)
+                col += 1
+        elif control == "\r": col = 0
+        elif control == "\n": goto(row + 1, col)
+        elif control == "\b": col = max(0, col - 1)
+        elif control == "\t": col = min(cols - 1, (col // 8 + 1) * 8)
+        elif esc == "7": saved = (row - top(), col)
+        elif esc == "8": goto(top() + saved[0], saved[1])
+        elif esc in ("D", "E"): goto(row + 1, 0 if esc == "E" else col)
+        elif esc == "M":
+            if row > top(): row -= 1
+            else: lines.insert(row, [])
+        elif final:
+            nums = [int(n) if n.isdigit() else 0 for n in params.replace(":", ";").split(";")] if params else []
+            n = max(1, nums[0]) if nums else 1
+            line = lines[row]
+            if prefix == "?" and final in "hl" and {47, 1047, 1049} & set(nums):
+                if final == "h" and main is None: main, lines, row, col = (lines, row, col), [[] for _ in range(rows)], 0, 0
+                elif final == "l" and main is not None: (lines, row, col), main = main, None
+            elif prefix: continue
+            elif final == "A": goto(max(top(), row - n), col)
+            elif final in "Be": goto(row + n, col)
+            elif final in "Ca": goto(row, col + n)
+            elif final == "D": goto(row, col - n)
+            elif final in "EF": goto(row + n if final == "E" else max(top(), row - n), 0)
+            elif final in "G`": goto(row, n - 1)
+            elif final in "Hf": goto(top() + (max(1, nums[0]) if nums else 1) - 1, (max(1, nums[1]) if len(nums) > 1 else 1) - 1)
+            elif final == "d": goto(top() + n - 1, col)
+            elif final == "K":
+                mode = nums[0] if nums else 0
+                if mode == 0: del line[col:]
+                elif mode == 1: line[:col + 1] = [" "] * min(len(line), col + 1)
+                else: line.clear()
+            elif final == "J":
+                mode = nums[0] if nums else 0
+                if mode == 0: del line[col:]; del lines[row + 1:]
+                elif mode == 1: lines[top():row] = [[] for _ in range(row - top())]
+                elif mode == 2: lines[top():] = [[] for _ in lines[top():]]
+                elif mode == 3:
+                    drop = top()
+                    del lines[:drop]
+                    row -= drop
+            elif final == "L": lines[row:row] = [[] for _ in range(n)]
+            elif final == "M": del lines[row:row + n]; goto(row, col)
+            elif final == "P": del line[col:col + n]
+            elif final == "@": line[col:col] = [" "] * n
+            elif final == "X": line[col:col + n] = [" "] * min(n, max(0, len(line) - col))
+            elif final == "S": lines.extend([] for _ in range(n))
+            elif final == "s": saved = (row - top(), col)
+            elif final == "u": goto(top() + saved[0], saved[1])
+    return ["".join(l).rstrip() for l in lines]
 
 
 def migrate_root(root):
@@ -318,7 +496,20 @@ class Backend:
             if r["id"] == rid: return r
         raise ValueError("Repository is not attached to this workspace")
 
+    def changes(self, **_):
+        # Cheap stat fingerprint of everything snapshot reads, so clients notice CLI/agent edits.
+        sess = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "sess" / "config.json"
+        files = [self.config_path, self.root / "utils" / "preferences.json", self.root / "workspaces",
+                 Path(os.environ.get("SESS_CONFIG", str(sess))), Path(os.environ.get("SESS_DIR", str(Path.home() / ".sess"))) / "remote",
+                 *sorted((self.root / "workspaces").glob("*/workspace.json"))]
+        parts = []
+        for f in files:
+            try: st = f.stat(); parts.append(f"{f}:{st.st_ino}:{st.st_mtime_ns}:{st.st_size}")
+            except OSError: parts.append(f"{f}:-")
+        return {"fingerprint": hashlib.sha256("\n".join(parts).encode()).hexdigest()[:24]}
+
     def snapshot(self, **_):
+        fingerprint = self.changes()["fingerprint"]
         config = self.config()
         workspaces, errors = [], []
         for f in (self.root / "workspaces").glob("*/workspace.json"):
@@ -348,20 +539,36 @@ class Backend:
                 if sep and key.endswith(".host") and host and host not in known:
                     remotes.append({"name": key[:-5], "ssh": host, "root": "~/relay"})
                     known.add(host)
-        return {"version": VERSION, "root": str(self.root), **config, "preferences": self.preferences_get(), "workspaces": workspaces,
+        return {"version": VERSION, "fingerprint": fingerprint, "root": str(self.root), **config, "preferences": self.preferences_get(), "workspaces": workspaces,
                 "sessRemotes": remotes, "errors": errors,
-                "tools": {t: shutil.which(t) is not None for t in ("git", "tmux", "ssh", "gh", "linear", "python3")}}
+                "tools": {t: shutil.which(t) is not None for t in ("git", "dtach", "ssh", "gh", "linear", "python3")}}
 
-    def host_add(self, name, ssh, root="~/relay", **_):
+    @staticmethod
+    def validate_host(name, ssh, root):
         ident(name)
         if name == "local": raise ValueError("local is reserved")
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]*", ssh): raise ValueError("Enter an SSH config alias or user@host")
         if not (root.startswith("/") or root.startswith("~/")): raise ValueError("VM root must be absolute or begin with ~/")
         if any(c in root for c in "\x00\n\r"): raise ValueError("Invalid root path")
+
+    def host_add(self, name, ssh, root="~/relay", **_):
+        self.validate_host(name, ssh, root)
         with self.lock():
             c = self.config()
             if any(h["name"] == name for h in c["hosts"]): raise ValueError("A host with that name already exists")
             c["hosts"].append({"name": name, "ssh": ssh, "root": root})
+            atomic(self.config_path, c)
+        return c
+
+    def host_update(self, name, ssh=None, root=None, new_name=None, **_):
+        with self.lock():
+            c = self.config()
+            current = next((h for h in c["hosts"] if h["name"] == name), None)
+            if not current: raise ValueError("Unknown host: " + name)
+            new_name, ssh, root = new_name or name, ssh or current["ssh"], root or current["root"]
+            self.validate_host(new_name, ssh, root)
+            if new_name != name and any(h["name"] == new_name for h in c["hosts"]): raise ValueError("A host with that name already exists")
+            c["hosts"] = [{"name": new_name, "ssh": ssh, "root": root} if h["name"] == name else h for h in c["hosts"]]
             atomic(self.config_path, c)
         return c
 
@@ -531,27 +738,40 @@ class Backend:
         return {"terminal": terminal, "session": session_name(terminal["id"]), "state": "live"}
 
     def terminal_target(self, workspace, terminal):
+        """A live session: a legacy tmux target string, or a DtachSession."""
         if not any(t["id"] == terminal for t in self.ws(workspace)["terminals"]):
             raise ValueError("Terminal does not belong to this workspace")
-        target = "=" + session_name(terminal) + ":"
-        if subprocess.run(["tmux", "has-session", "-t", target], capture_output=True).returncode:
-            raise ValueError("Terminal session is not live")
-        return target
+        legacy = legacy_tmux_session(terminal)
+        if legacy: return "=" + legacy + ":"
+        session = DtachSession(self.root, terminal)
+        session.require_live()
+        return session
 
     def terminal_read(self, workspace, terminal, lines=200, **_):
         lines = int(lines)
         if not 1 <= lines <= 10000: raise ValueError("lines must be between 1 and 10000")
         target = self.terminal_target(workspace, terminal)
-        output = text(run(["tmux", "capture-pane", "-p", "-J", "-t", target, "-S", str(-lines)]))
+        if isinstance(target, DtachSession): output = target.read(lines)
+        else: output = text(run(["tmux", "capture-pane", "-p", "-J", "-t", target, "-S", str(-lines)]))
         return {"terminal": terminal, "state": "live", "output": output}
 
     def terminal_send(self, workspace, terminal, input_text="", enter=False, **_):
         if not isinstance(input_text, str) or len(input_text) > 65536 or "\x00" in input_text:
             raise ValueError("Terminal input must be text, at most 64 KiB")
         target = self.terminal_target(workspace, terminal)
-        if input_text: run(["tmux", "send-keys", "-t", target, "-l", "--", input_text])
-        if enter: run(["tmux", "send-keys", "-t", target, "Enter"])
+        if isinstance(target, DtachSession):
+            # Separate writes, like tmux send-keys, so TUIs don't treat text+Enter as one paste.
+            if input_text: target.send(input_text.encode())
+            if enter: target.send(b"\r")
+        else:
+            if input_text: run(["tmux", "send-keys", "-t", target, "-l", "--", input_text])
+            if enter: run(["tmux", "send-keys", "-t", target, "Enter"])
         return {"sent": len(input_text), "enter": bool(enter)}
+
+    def live_cwd(self, terminal):
+        legacy = legacy_tmux_session(terminal)
+        if legacy: return text(run(["tmux", "display-message", "-p", "-t", "=" + legacy + ":", "#{pane_current_path}"]))
+        return DtachSession(self.root, terminal).cwd()
 
     def workspace_reorder(self, ids, **_):
         with self.lock():
@@ -581,7 +801,7 @@ class Backend:
             if not source: raise ValueError("Unknown terminal")
             cwd = source["cwd"]
             if source.get("started"):
-                cwd = text(run(["tmux", "display-message", "-p", "-t", "=" + session_name(terminal) + ":", "#{pane_current_path}"]))
+                cwd = self.live_cwd(terminal)
                 if not Path(cwd).is_dir(): raise ValueError("Terminal directory is unavailable")
             tab = source.get("tab_id", source["id"])
             layouts = ws.setdefault("layouts", {})
@@ -622,35 +842,23 @@ class Backend:
             ws = self.ws(workspace)
             t = next((t for t in ws["terminals"] if t["id"] == terminal), None)
             if not t: raise ValueError("Unknown terminal")
-            if not shutil.which("tmux"): raise ValueError("tmux is required. Install it with brew install tmux (Mac), or your VM package manager.")
             self.install_cli()
-            session = session_name(terminal)
-            sess_dir = self.root / "utils" / "sess-state"
-            state_dir = sess_dir / "sessions" / session
-            state_dir.mkdir(parents=True, exist_ok=True)
-            state = {"SESS_SESSION": session, "SESS_CWD": t["cwd"], "SESS_BRANCH": "main", "SESS_CREATED": str(int(time.time()))}
-            (state_dir / "state").write_text("\n".join(k + "=" + shlex.quote(v) for k, v in state.items()) + "\n")
             capabilities = {"TERM": "xterm-256color", "COLORTERM": "truecolor", "TERM_PROGRAM": "Relay", "TERM_PROGRAM_VERSION": VERSION, "FORCE_HYPERLINK": "1"}
-            env = dict(os.environ, RELAY_ROOT=str(self.root), RELAY_WORKSPACE=workspace, SESS_DIR=str(sess_dir), **capabilities)
-            env["PATH"] = str(self.root / "utils" / "bin") + os.pathsep + env.get("PATH", "")
-            check = subprocess.run(["tmux", "has-session", "-t", "=" + session], capture_output=True)
-            if check.returncode:
-                error = check.stderr.decode(errors="replace")
-                if not any(v in error for v in ("can't find session", "no server running", "No such file or directory")):
-                    raise ValueError("Session state is unverifiable: " + error)
+            path = str(self.root / "utils" / "bin") + os.pathsep + os.environ.get("PATH", "")
+            attach_env = {"RELAY_ROOT": str(self.root), "RELAY_WORKSPACE": workspace, "PATH": path, "LANG": utf8_locale(), **capabilities}
+            legacy = legacy_tmux_session(terminal)
+            if legacy:
+                # xterm owns drag selection; tmux owns wheel scrolling through its history.
+                run(["tmux", "set-option", "-t", legacy, "mouse", "on"])
+                return {"program": "tmux", "args": ["-u", "-T", "RGB,hyperlinks", "attach-session", "-t", "=" + legacy], "env": attach_env, "cwd": t["cwd"]}
+            session = DtachSession(self.root, terminal)
+            if not session.live():
                 if t.get("started"):
                     raise ValueError("This session has exited. Create a new terminal to start another shell.")
-                t["started"] = True
-                self.save_ws(ws)
                 shell = os.environ.get("SHELL", "/bin/bash")
-                args = ["tmux", "new-session", "-d", "-s", session, "-c", t["cwd"]]
-                for k in ("RELAY_ROOT", "RELAY_WORKSPACE", "PATH", *capabilities):
-                    args += ["-e", k + "=" + env[k]]
-                # Clean the pane environment too: an existing tmux server retains its launcher environment.
-                args += ["env", "-u", "NO_COLOR", "-u", "CI", "-u", "FORCE_COLOR", "-u", "CLICOLOR"]
                 resume = t.get("agent_resume")
                 if t.get("launch_command"):
-                    args += [shell, "-lic", t["launch_command"] + "; exec " + shlex.quote(shell) + " -l"]
+                    argv = [shell, "-lic", t["launch_command"] + "; exec " + shlex.quote(shell) + " -l"]
                 elif resume:
                     agent = resume.get("agent")
                     if agent not in ("codex", "claude"): raise ValueError("Unsupported imported agent")
@@ -660,21 +868,28 @@ class Backend:
                         command = [agent, "resume" if agent == "codex" else "--resume", session_id]
                     else: command = [agent]
                     command_text = " ".join(shlex.quote(arg) for arg in command)
-                    args += [shell, "-lic", command_text + "; exec " + shlex.quote(shell) + " -l"]
-                else: args += [shell, "-l"]
-                run(args, env=env)
-                run(["tmux", "set-option", "-t", session, "history-limit", "10000"])
-            # xterm owns drag selection; tmux owns wheel scrolling through remote history.
-            run(["tmux", "set-option", "-t", session, "mouse", "on"])
-            # sess handles attach/persistence, using isolated state with no default remote.
-            sess = self.root / "utils" / "relay" / "sess-legacy"
-            return {"program": "bash", "args": [str(sess), "attach", session], "env": {"SESS_DIR": str(sess_dir), "RELAY_ROOT": str(self.root), "RELAY_WORKSPACE": workspace, "RELAY_NO_STATUS": "1", "SESS_ATTACH_ONLY": "1", "PATH": env["PATH"], "SESS_TERMINAL_FEATURES": "RGB,hyperlinks", **capabilities}, "cwd": t["cwd"]}
+                    argv = [shell, "-lic", command_text + "; exec " + shlex.quote(shell) + " -l"]
+                else: argv = [shell, "-l"]
+                env = {k: v for k, v in os.environ.items() if k not in ("NO_COLOR", "CI", "FORCE_COLOR", "CLICOLOR", "TMUX", "TMUX_PANE")}
+                session.create(argv, t["cwd"], {**env, **attach_env})
+                t["started"] = True
+                self.save_ws(ws)
+            command = session.attach_command()
+            return {"program": command[0], "args": command[1:], "env": attach_env, "cwd": t["cwd"]}
+
+    def terminal_state(self, workspace, terminal, **_):
+        t = next((t for t in self.ws(workspace)["terminals"] if t["id"] == terminal), None)
+        if not t: return {"state": "exited"}
+        live = legacy_tmux_session(terminal) or DtachSession(self.root, terminal).live()
+        return {"state": "live" if live or not t.get("started") else "exited"}
 
     def terminal_remove(self, workspace, terminal, **_):
         with self.lock():
             ws = self.ws(workspace)
             if not any(t["id"] == terminal for t in ws["terminals"]): raise ValueError("Unknown terminal")
-            run(["tmux", "kill-session", "-t", "=" + session_name(terminal)], ok=(0, 1))
+            legacy = legacy_tmux_session(terminal)
+            if legacy: run(["tmux", "kill-session", "-t", "=" + legacy], ok=(0, 1))
+            DtachSession(self.root, terminal).kill()
             ws["terminals"] = [t for t in ws["terminals"] if t["id"] != terminal]
             def prune(tree):
                 if "terminal" in tree: return None if tree["terminal"] == terminal else tree
@@ -687,7 +902,7 @@ class Backend:
     def install_cli(self):
         folder = self.root / "utils" / "relay"
         folder.mkdir(parents=True, exist_ok=True)
-        for filename in ("relay.py", "sess-legacy", "SESS-LICENSE", "RELAY-CLI.md"):
+        for filename in ("relay.py", "RELAY-CLI.md"):
             src = Path(__file__).resolve().parent / filename
             dest = folder / filename
             if src != dest and (not dest.exists() or src.read_bytes() != dest.read_bytes()): shutil.copy2(src, dest)
@@ -748,7 +963,9 @@ class Backend:
     def terminal_agents(self, terminals):
         if not any(t.get("started") for t in terminals): return {t["id"]: None for t in terminals}
         try:
-            panes = text(run(["tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}"], timeout=3))
+            panes = "".join(f"relay-{t['id']}\t{pid}\n" for t in terminals if t.get("started") and (pid := DtachSession(self.root, t["id"]).pid()))
+            if shutil.which("tmux"):
+                panes += text(run(["tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}"], ok=(0, 1), timeout=3))
             processes = text(run(["ps", "-axo", "pid=,ppid=,pgid=,tpgid=,args="], timeout=3))
             return foreground_agents(panes, processes, terminals)
         except (OSError, ValueError, subprocess.TimeoutExpired): return None
@@ -766,7 +983,7 @@ class Backend:
         if not session: raise ValueError("Unknown terminal")
         cwd = session["cwd"]
         if session.get("started"):
-            cwd = text(run(["tmux", "display-message", "-p", "-t", "=" + session_name(terminal) + ":", "#{pane_current_path}"]))
+            cwd = self.live_cwd(terminal)
         return {"path": cwd}
 
     def file_info(self, workspace, repo, path, **_):
@@ -786,7 +1003,7 @@ class Backend:
         if not session: raise ValueError("Unknown terminal")
         cwd = session["cwd"]
         if session.get("started"):
-            cwd = text(run(["tmux", "display-message", "-p", "-t", "=" + session_name(terminal) + ":", "#{pane_current_path}"]))
+            cwd = self.live_cwd(terminal)
         result = []
         for value in paths:
             if not isinstance(value, str) or len(value) > 4096: raise ValueError("Invalid file path")
@@ -969,9 +1186,80 @@ class Backend:
         return result
 
     def dispatch(self, op, args=None):
-        allowed = {"repo_inventory", "repo_compare", "terminal_run", "terminal_read", "terminal_send", "resolve_links", "file_info", "terminal_cwd", "terminal_split", "terminal_resize", "terminal_reorder", "workspace_reorder", "snapshot", "preferences_get", "preferences_set", "host_add", "host_remove", "repo_register", "branches", "workspace_create", "repo_attach", "workspace_archive", "workspace_rename", "terminal_rename", "terminal_new", "terminal_prepare", "terminal_remove", "status", "files", "file", "file_save", "diff", "diff_content", "git_action", "ticket_attach", "integrations", "install_cli"}
+        allowed = {"repo_inventory", "repo_compare", "terminal_run", "terminal_read", "terminal_send", "resolve_links", "file_info", "terminal_cwd", "terminal_split", "terminal_resize", "terminal_reorder", "workspace_reorder", "snapshot", "changes", "terminal_state", "preferences_get", "preferences_set", "host_add", "host_update", "host_remove", "repo_register", "branches", "workspace_create", "repo_attach", "workspace_archive", "workspace_rename", "terminal_rename", "terminal_new", "terminal_prepare", "terminal_remove", "status", "files", "file", "file_save", "diff", "diff_content", "git_action", "ticket_attach", "integrations", "install_cli"}
         if op not in allowed: raise ValueError("Unknown operation: " + op)
         return getattr(self, op)(**(args or {}))
+
+
+def pty_host(log_path, pid_path, argv):
+    """Runs under dtach: relays bytes between dtach's pty and the shell's pty, logging output for replay and `terminal read`."""
+    import pty, select, signal, struct, termios, tty
+    pid, master = pty.fork()
+    if pid == 0:
+        with contextlib.suppress(OSError): os.execvp(argv[0], argv)
+        os._exit(127)
+    def record(cols=0, rows=0):
+        atomic_text(Path(pid_path), f"{os.getpid()} {pid} {cols} {rows}\n")
+    def sync_size(*_):
+        try:
+            size = fcntl.ioctl(0, termios.TIOCGWINSZ, b"\0" * 8)
+            rows, cols = struct.unpack("HH", size[:4])
+            if not rows or not cols: rows, cols, size = 24, 80, struct.pack("HHHH", 24, 80, 0, 0)
+            fcntl.ioctl(master, termios.TIOCSWINSZ, size)
+            record(cols, rows)
+            # dtach's redraw signal must reach the app even when the size is unchanged.
+            os.killpg(os.tcgetpgrp(master), signal.SIGWINCH)
+        except OSError: pass
+    def stop(*_): raise SystemExit(0)
+    record()
+    with contextlib.suppress(termios.error): tty.setraw(0)
+    sync_size()
+    signal.signal(signal.SIGWINCH, sync_size)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGHUP, stop)
+    log = open(log_path, "ab", buffering=0)
+    written, inputs = log.tell(), [0, master]
+    try:
+        while True:
+            ready = select.select(inputs, [], [])[0]
+            if master in ready:
+                try: data = os.read(master, 65536)
+                except OSError: data = b""
+                if not data: break
+                with contextlib.suppress(OSError): write_fd(1, data)
+                log.write(data)
+                written += len(data)
+                if written > LOG_MAX:
+                    log.close()
+                    keep = tail_bytes(log_path, LOG_KEEP)
+                    Path(log_path).write_bytes(keep)
+                    log, written = open(log_path, "ab", buffering=0), len(keep)
+            if 0 in ready:
+                data = os.read(0, 65536)
+                if data: write_fd(master, data)
+                else: inputs.remove(0)
+    finally:
+        os.close(master)
+        for _ in range(20):
+            with contextlib.suppress(ChildProcessError):
+                if os.waitpid(pid, os.WNOHANG)[0]: break
+            time.sleep(.1)
+
+
+def write_fd(fd, data):
+    while data: data = data[os.write(fd, data):]
+
+
+def atomic_text(path, value):
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(value)
+    os.replace(tmp, path)
+
+
+def attach_session(sock, log_path):
+    """Replays recent output into the fresh xterm, then hands the pty to dtach."""
+    write_fd(1, TERMINAL_QUERY.sub(b"", tail_bytes(log_path, REPLAY_BYTES)))
+    os.execvp("dtach", ["dtach", "-a", sock, "-E", "-z", "-r", "winch"])
 
 
 def rpc(backend):
@@ -984,6 +1272,8 @@ def rpc(backend):
 
 
 def main():
+    if sys.argv[1:2] == ["--pty-host"] and len(sys.argv) > 5 and sys.argv[4] == "--": return pty_host(sys.argv[2], sys.argv[3], sys.argv[5:])
+    if sys.argv[1:2] == ["--attach"] and len(sys.argv) == 4: return attach_session(sys.argv[2], sys.argv[3])
     parser = argparse.ArgumentParser(description="Relay — multi-repo agent workspaces", epilog="Commands: workspace list/create/rename/archive; repo register/attach/list/compare; terminal new/run/read/send/remove/split/rename; ticket attach; host add. Run a persistent command with: relay --workspace ID terminal run --name Review --command 'codex' --json. Read output: relay --workspace ID terminal read --terminal ID --json. Send input: terminal send --terminal ID --input-text TEXT [--enter]. Relay does not implement Orca orchestration or orca-ide.")
     parser.add_argument("--version", action="version", version="Relay " + VERSION)
     parser.add_argument("--root", default=os.environ.get("RELAY_ROOT") or os.environ.get("MAGI_ROOT"))
@@ -995,7 +1285,7 @@ def main():
     args, extras = parser.parse_known_args()
     if args.rpc: return rpc(Backend(args.root))
     sub = argparse.ArgumentParser(add_help=False)
-    for opt in ("ref", "repo", "branch", "new-branch", "base", "path", "url", "name", "terminal", "axis", "host", "ssh", "cwd", "scope", "directory", "message", "command", "input-text", "lines"):
+    for opt in ("ref", "repo", "branch", "new-branch", "base", "path", "url", "name", "terminal", "axis", "host", "ssh", "new-name", "cwd", "scope", "directory", "message", "command", "input-text", "lines"):
         sub.add_argument("--" + opt)
     for opt in ("blank", "utility", "enter"):
         sub.add_argument("--" + opt, action="store_true")
@@ -1004,7 +1294,7 @@ def main():
     words = args.words
     if not words: parser.print_help(); return
     backend = Backend(args.root)
-    commands = {("repo", "compare"): "repo_compare", ("terminal", "run"): "terminal_run", ("terminal", "read"): "terminal_read", ("terminal", "send"): "terminal_send", ("terminal", "remove"): "terminal_remove", ("terminal", "split"): "terminal_split",("workspace", "rename"): "workspace_rename", ("terminal", "rename"): "terminal_rename", ("workspace", "list"): "snapshot", ("workspace", "create"): "workspace_create", ("workspace", "archive"): "workspace_archive", ("repo", "register"): "repo_register", ("repo", "attach"): "repo_attach", ("repo", "list"): "snapshot", ("terminal", "new"): "terminal_new", ("ticket", "attach"): "ticket_attach", ("host", "add"): "host_add", ("host", "remove"): "host_remove"}
+    commands = {("repo", "compare"): "repo_compare", ("terminal", "run"): "terminal_run", ("terminal", "read"): "terminal_read", ("terminal", "send"): "terminal_send", ("terminal", "remove"): "terminal_remove", ("terminal", "split"): "terminal_split",("workspace", "rename"): "workspace_rename", ("terminal", "rename"): "terminal_rename", ("workspace", "list"): "snapshot", ("workspace", "create"): "workspace_create", ("workspace", "archive"): "workspace_archive", ("repo", "register"): "repo_register", ("repo", "attach"): "repo_attach", ("repo", "list"): "snapshot", ("terminal", "new"): "terminal_new", ("ticket", "attach"): "ticket_attach", ("host", "add"): "host_add", ("host", "update"): "host_update", ("host", "remove"): "host_remove"}
     op = commands.get(tuple(words[:2]), words[0])
     positional = words[2:]
     if args.workspace: options["workspace"] = args.workspace
@@ -1016,7 +1306,7 @@ def main():
     elif op == "repo_register" and positional: options["path"] = positional[0]
     elif op == "ticket_attach" and positional: options["ticket"] = positional[0]
     elif op == "host_add" and positional: options["name"] = positional[0]
-    elif op == "host_remove" and positional: options["name"] = positional[0]
+    elif op in ("host_remove", "host_update") and positional: options["name"] = positional[0]
     if "ref" in options: options["comparison_ref"] = options.pop("ref")
     host = options.pop("host", "local")
     try:
@@ -1034,7 +1324,7 @@ if old.is_symlink() and old.resolve()==r and previous.exists() and not previous.
 d.mkdir(parents=True,exist_ok=True)
 [(d/k).write_text(v) for k,v in p['files'].items()]
 os.execv(sys.executable,[sys.executable,'-u',str(d/'relay.py'),'--root',str(r),'--rpc'])"""
-            files = {f: (Path(__file__).parent / f).read_text() for f in ("relay.py", "sess-legacy", "SESS-LICENSE", "RELAY-CLI.md")}
+            files = {f: (Path(__file__).parent / f).read_text() for f in ("relay.py", "RELAY-CLI.md")}
             payload = json.dumps({"root": h["root"], "files": files}) + "\n" + json.dumps({"op": op, "args": options}) + "\n"
             p = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", "--", h["ssh"], "python3 -u -c " + shlex.quote(bootstrap)], input=payload, capture_output=True, text=True, timeout=180)
             if p.returncode: raise ValueError(p.stderr.strip() or "SSH backend failed")

@@ -8,13 +8,16 @@ import {
   TerminalSquare,
   LockKeyhole,
   FolderGit2,
-  Settings2
+  Settings2,
+  Sun,
+  Moon
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import type { HostSection } from './host-sections'
 import type { FormKind } from './forms'
+import type { Theme } from './theme'
 export function WorkspaceSidebar({
   host,
   sections,
@@ -28,6 +31,8 @@ export function WorkspaceSidebar({
   setForm,
   openRepositories,
   openSettings,
+  theme,
+  toggleTheme,
   refresh
 }: {
   host: string
@@ -43,6 +48,8 @@ export function WorkspaceSidebar({
   setForm: (kind: FormKind, host?: string) => void
   refresh: () => void
   openSettings: () => void
+  theme: Theme
+  toggleTheme: () => void
 }) {
   const menus = useInteractions()
   return (
@@ -191,10 +198,21 @@ export function WorkspaceSidebar({
           <FolderGit2 />
           Repositories
         </Button>
-        <Button variant="ghost" className="w-full justify-start" size="sm" onClick={openSettings}>
-          <Settings2 />
-          Settings
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" className="flex-1 justify-start" size="sm" onClick={openSettings}>
+            <Settings2 />
+            Settings
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            onClick={toggleTheme}
+          >
+            {theme === 'dark' ? <Sun /> : <Moon />}
+          </Button>
+        </div>
       </div>
     </aside>
   )

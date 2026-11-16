@@ -21,7 +21,7 @@ class FileLinkTests(unittest.TestCase):
         (elsewhere / 'with spaces.txt').write_text('Outside file')
         ws['terminals'][0]['started'] = True
         self.backend.save_ws(ws)
-        with mock.patch.object(test_backend.relay, 'run', return_value=str(elsewhere).encode()):
+        with mock.patch.object(test_backend.relay.Backend, 'live_cwd', return_value=str(elsewhere)):
             result = self.backend.resolve_links('genral', ws['terminals'][0]['id'], ['with spaces.txt'])
         self.assertEqual(self.backend.file('genral', **result[0])['text'], 'Outside file')
         with self.assertRaises(ValueError): self.backend.file('genral', '@workspace', '../outside/with spaces.txt')

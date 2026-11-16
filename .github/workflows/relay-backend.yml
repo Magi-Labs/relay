@@ -27,5 +27,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: sudo apt-get update && sudo apt-get install -y dtach
       - run: python3 -m unittest discover -s resources/relay/tests -v

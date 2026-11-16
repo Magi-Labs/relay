@@ -1,5 +1,5 @@
 import { GitStatusIcon } from './git-status-icon'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Folder, LoaderCircle } from 'lucide-react'
 import { getFileTypeIcon } from '@/lib/file-type-icons'
 import { ActionMenu, copyPath } from './action-menu'
@@ -15,7 +15,8 @@ export function useFileTree(host: string, workspace: Workspace, active?: OpenFil
       return []
     }
   })
-  const [revision, refresh] = useState(0)
+  const [revision, setRevision] = useState(0)
+  const refresh = useCallback(() => setRevision((n) => n + 1), [])
   const rowKey = (repo: string, path: string) => JSON.stringify([repo, path])
   const target = active?.absolutePath || (active?.repo === '@files' ? active.path : undefined)
   const roots = [{ id: '@workspace', path: workspace.path }, ...workspace.repos]
@@ -52,7 +53,7 @@ export function useFileTree(host: string, workspace: Workspace, active?: OpenFil
           : [...old, rowKey(repo, path)]
       ),
     collapse: () => setExpanded([]),
-    refresh: () => refresh((n) => n + 1)
+    refresh
   }
 }
 export type Tree = ReturnType<typeof useFileTree>
@@ -84,9 +85,12 @@ export function Directory({
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true),
     [limited, setLimited] = useState(false)
+  const loaded = useRef('')
+  const source = JSON.stringify([host, workspace, repo, directory])
   useEffect(() => {
     let active = true
-    setLoading(true)
+    // Background reloads keep the current rows instead of flashing a spinner.
+    setLoading(loaded.current !== source)
     setError('')
     if (virtual) {
       setEntries([])
@@ -101,6 +105,7 @@ export function Directory({
       })
       .then((result) => {
         if (active) {
+          loaded.current = source
           setEntries(result.entries)
           setLimited(result.limited)
         }
@@ -118,7 +123,7 @@ export function Directory({
     return () => {
       active = false
     }
-  }, [host, workspace, repo, directory, tree.revision, virtual])
+  }, [host, workspace, repo, directory, source, tree.revision, virtual])
   const visible = [...entries]
   const virtualPaths = new Set<string>()
   const changes = comparison?.error ? [] : comparison?.files || []
